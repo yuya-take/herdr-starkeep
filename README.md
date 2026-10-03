@@ -13,20 +13,24 @@ herdrで動いているエージェントを、軌道上の修練船で働く騎
 ## 必要なもの
 
 - herdr 0.9.0 以降
-- Rust 1.84 以降（`cargo`）
-- `jq`（フックで使います）
+- `jq`（Claude Code のフックで使います）
+- macOS（Apple Silicon / Intel）と Linux（x86_64 / arm64）はビルド済みの実行ファイルを使います。それ以外の環境では Rust（`cargo`）でビルドします
 
 ## インストール
 
 ```sh
-cargo build --release --locked
-herdr plugin link "$PWD"
-herdr plugin pane open --plugin starkeep --entrypoint ship
+herdr plugin install yuya-take/herdr-starkeep
+herdr plugin action invoke starkeep.setup-hooks   # 見習い（サブエージェント）を表示する
+herdr plugin action invoke starkeep.setup-key     # prefix+shift+k で開く
 ```
 
-GitHubに置いた場合は、`herdr plugin install <owner>/<repo>` でもインストールできます（ビルドはherdrが行います）。
+1行目で、herdrがリポジトリを取得し、GitHub Releases からこの環境向けの実行ファイルをダウンロードします。ダウンロードしたファイルは SHA-256 のチェックサムで確認し、一致しなければインストールを中止します。
 
-画面全体の90%のポップアップで開きます。キーに割り当てる場合は、herdrの `config.toml` に次を追加して `herdr server reload-config` を実行します（`prefix+k` は標準でペイン移動に使われています）。
+開くと画面の90%のポップアップになります。キーを割り当てずに開くときは `herdr plugin action invoke starkeep.open` です。
+
+### キーの割り当て
+
+`starkeep.setup-key` は、herdrの `config.toml` に次の設定を追加して、設定を再読み込みします。元のファイルは `config.toml.starkeep-backup` として残ります。別のキーにしたいときは、アクションを使わずに次の設定を手で書き、`key` を変えてから `herdr server reload-config` を実行します（`prefix+k` は標準でペイン移動に使われています）。
 
 ```toml
 [[keys.command]]
@@ -36,15 +40,11 @@ command = "starkeep.open"
 description = "open starkeep"
 ```
 
-### 見習い（サブエージェント）を表示する
+`herdr --remote` でつないでいる場合、独自コマンドのキーは手元の設定では効きません。サーバー側でこのアクションを実行し、`herdr --remote <接続先> --remote-keybindings server` でつないでください。
 
-Claude Codeのフックを設定します。
+### 見習い（サブエージェント）の表示
 
-```sh
-hooks/install.sh
-```
-
-このスクリプトは、`hooks/hook.sh` を `~/.config/starkeep/hook.sh` にリンクし、`hooks/settings.json` のフック設定を `~/.claude/settings.json` に追加します。元の設定ファイルは `settings.json.starkeep-backup` として残ります。
+`starkeep.setup-hooks` は、`hooks/hook.sh` を `~/.config/starkeep/hook.sh` にコピーし、`hooks/settings.json` のフック設定を `~/.claude/settings.json` に追加します。元の設定ファイルは `settings.json.starkeep-backup` として残ります。設定後に起動した Claude Code から有効になります。外すときは `starkeep.remove-hooks` です。
 
 | フック | 記録するイベント |
 | --- | --- |
@@ -63,6 +63,20 @@ hooks/install.sh
 | Enter / クリック | 選んだ部屋に寄る（応答待ちの騎士から） | その騎士のペインへ移動して閉じる（Enter） |
 | Esc | 閉じる | 全体図に戻る（クリックでも戻る） |
 | q | 終了 | 終了 |
+
+## 開発
+
+手元の作業フォルダをそのままherdrにつなぎます。
+
+```sh
+cargo build --release --locked
+herdr plugin link "$PWD"
+herdr plugin pane open --plugin starkeep --entrypoint ship
+```
+
+### リリース
+
+`herdr-plugin.toml` と `Cargo.toml` の `version` を上げてマージし、同じ番号のタグ（例: `v0.2.0`）をpushします。CIが各環境向けにビルドして GitHub Releases に置きます。
 
 ## デモ
 
@@ -88,4 +102,8 @@ src/sprites.rs      文字列とパレットのドット絵
 src/render.rs       ハーフブロックのフレームバッファと文字の層
 src/demo.rs         --demo 用の模擬データ
 hooks/hook.sh       Claude Code から呼ぶスクリプト
+hooks/install.sh    フックの設定（starkeep.setup-hooks）
+hooks/uninstall.sh  フックの削除（starkeep.remove-hooks）
+scripts/install-binary.sh  インストール時の実行ファイル取得（なければビルド）
+scripts/setup-key.sh       キーの割り当て（starkeep.setup-key）
 ```
