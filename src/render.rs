@@ -81,7 +81,15 @@ pub struct Canvas {
 
 impl Canvas {
     pub fn new() -> Canvas {
-        Canvas { cols: 0, rows: 0, w: 0, h: 0, ox: 0, px: Vec::new(), spans: Vec::new() }
+        Canvas {
+            cols: 0,
+            rows: 0,
+            w: 0,
+            h: 0,
+            ox: 0,
+            px: Vec::new(),
+            spans: Vec::new(),
+        }
     }
 
     pub fn begin(&mut self, cols: u16, rows: u16, bg: Rgb) {
@@ -138,7 +146,13 @@ impl Canvas {
     /// Queue text at a cell. Returns the column after the text.
     pub fn text(&mut self, col: i32, row: i32, s: &str, fg: Rgb, bg: Rgb) -> i32 {
         let width = str_width(s) as i32;
-        self.spans.push(Span { col: col + self.ox, row, text: s.to_string(), fg, bg });
+        self.spans.push(Span {
+            col: col + self.ox,
+            row,
+            text: s.to_string(),
+            fg,
+            bg,
+        });
         col + width
     }
 

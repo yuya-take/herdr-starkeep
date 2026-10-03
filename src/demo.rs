@@ -21,7 +21,14 @@ const TASKS: [&str; 10] = [
     "trace a bug",
     "bench render",
 ];
-const TITLES: [&str; 6] = ["Read src/main.rs", "Edit src/pane.rs", "Bash cargo test", "Grep \"subagent\"", "認証フローの調査", "Write README.md"];
+const TITLES: [&str; 6] = [
+    "Read src/main.rs",
+    "Edit src/pane.rs",
+    "Bash cargo test",
+    "Grep \"subagent\"",
+    "認証フローの調査",
+    "Write README.md",
+];
 
 struct Fake {
     pane: String,
@@ -38,9 +45,24 @@ pub fn spawn(tx: Sender<Msg>, knights: usize) {
         let mut rng = Rng::new(42);
         let ws_names = ["core", "apps", "infra", "docs"];
         let names = [
-            "claude:api", "codex:web", "claude:docs", "claude:infra", "codex:mobile", "claude:auth", "pi:scripts",
-            "claude:tests", "codex:ui", "claude:db", "codex:cli", "claude:search", "pi:ops", "claude:perf", "codex:etl",
-            "claude:ml", "codex:sdk", "claude:sec",
+            "claude:api",
+            "codex:web",
+            "claude:docs",
+            "claude:infra",
+            "codex:mobile",
+            "claude:auth",
+            "pi:scripts",
+            "claude:tests",
+            "codex:ui",
+            "claude:db",
+            "codex:cli",
+            "claude:search",
+            "pi:ops",
+            "claude:perf",
+            "codex:etl",
+            "claude:ml",
+            "codex:sdk",
+            "claude:sec",
         ];
         let states = ["working", "working", "idle", "working", "blocked", "working", "done"];
         let mut fakes: Vec<Fake> = (0..knights)
@@ -56,7 +78,15 @@ pub fn spawn(tx: Sender<Msg>, knights: usize) {
             .collect();
         let mut seq = 0;
         let send_hook = |tx: &Sender<Msg>, kind, pane: &str, id: Option<String>, task: Option<&str>| {
-            let ev = HookEvent { kind, pane: pane.into(), session: None, agent_id: id, agent_type: None, task: task.map(Into::into), ts: 0.0 };
+            let ev = HookEvent {
+                kind,
+                pane: pane.into(),
+                session: None,
+                agent_id: id,
+                agent_type: None,
+                task: task.map(Into::into),
+                ts: 0.0,
+            };
             tx.send(Msg::Hook(ev)).is_ok()
         };
         loop {
@@ -74,7 +104,10 @@ pub fn spawn(tx: Sender<Msg>, knights: usize) {
                     })
                     .collect(),
                 workspaces: (0..knights.div_ceil(5))
-                    .map(|i| Workspace { id: format!("w{}", i + 1), label: ws_names[i % ws_names.len()].into() })
+                    .map(|i| Workspace {
+                        id: format!("w{}", i + 1),
+                        label: ws_names[i % ws_names.len()].into(),
+                    })
                     .collect(),
             };
             if tx.send(Msg::Snapshot(snap)).is_err() {

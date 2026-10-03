@@ -2,6 +2,7 @@
 
 use crate::render::{Pal, Rgb};
 
+#[rustfmt::skip]
 pub const KNIGHT: [&str; 16] = [
     "....hhhh....",
     "...hHHHHh...",
@@ -21,6 +22,7 @@ pub const KNIGHT: [&str; 16] = [
     "hhHHTTTTHHhh",
 ];
 
+#[rustfmt::skip]
 pub const KNIGHT_MINI: [&str; 9] = [
     "..hhh..",
     ".hHHHh.",
@@ -33,6 +35,7 @@ pub const KNIGHT_MINI: [&str; 9] = [
     "hHTTTHh",
 ];
 
+#[rustfmt::skip]
 pub const APPRENTICE: [&str; 12] = [
     "...hhh...",
     "..hhhhh..",
@@ -51,6 +54,7 @@ pub const APPRENTICE: [&str; 12] = [
 /// Second walking frame for the last two rows of `APPRENTICE`.
 pub const APPRENTICE_STRIDE: [&str; 2] = [".TT...TT.", ".KK...KK."];
 
+#[rustfmt::skip]
 pub const APPRENTICE_SEATED: [&str; 9] = [
     "...hhh...",
     "..hhhhh..",
@@ -63,6 +67,7 @@ pub const APPRENTICE_SEATED: [&str; 9] = [
     "TTTTTTTTT",
 ];
 
+#[rustfmt::skip]
 pub const APPRENTICE_MINI: [&str; 6] = [".hh.", "hCCh", "SEES", ".SS.", "TTTT", "T..T"];
 
 pub const CRYSTALS: [Rgb; 15] = [

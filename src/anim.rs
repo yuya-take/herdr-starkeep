@@ -139,7 +139,11 @@ pub struct Starfield {
 impl Starfield {
     pub fn new(w: &mut World, n: usize, height: i32) -> Starfield {
         let stars = (0..n)
-            .map(|_| Star { x: w.rng.range(0.0, 1.0), y: (w.rng.f() * height as f32) as i32, s: w.rng.range(0.5, 1.6) })
+            .map(|_| Star {
+                x: w.rng.range(0.0, 1.0),
+                y: (w.rng.f() * height as f32) as i32,
+                s: w.rng.range(0.5, 1.6),
+            })
             .collect();
         Starfield { stars }
     }

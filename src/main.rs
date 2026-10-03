@@ -14,7 +14,10 @@ use std::io;
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton,
+    MouseEventKind,
+};
 use crossterm::execute;
 use ratatui::DefaultTerminal;
 
@@ -41,11 +44,20 @@ struct Args {
 }
 
 fn parse_args() -> Result<Args, String> {
-    let mut a = Args { demo: None, snapshot: None, cols: 112, rows: 34, seconds: 3.0, zoom: false };
+    let mut a = Args {
+        demo: None,
+        snapshot: None,
+        cols: 112,
+        rows: 34,
+        seconds: 3.0,
+        zoom: false,
+    };
     let mut it = std::env::args().skip(1).peekable();
     while let Some(arg) = it.next() {
         let mut num = |name: &str| -> Result<f32, String> {
-            it.next().and_then(|v| v.parse().ok()).ok_or(format!("{name} needs a number"))
+            it.next()
+                .and_then(|v| v.parse().ok())
+                .ok_or(format!("{name} needs a number"))
         };
         match arg.as_str() {
             "--demo" => a.demo = Some(7),
@@ -235,7 +247,11 @@ fn snapshot(args: &Args, path: &str) -> io::Result<()> {
     if !world.online {
         eprintln!("starkeep: herdr {}", world.status);
     }
-    eprintln!("starkeep: {} knights, {} apprentices", world.knights.len(), world.apps.len());
+    eprintln!(
+        "starkeep: {} knights, {} apprentices",
+        world.knights.len(),
+        world.apps.len()
+    );
     view.draw(&world, &mut canvas);
     std::fs::write(path, canvas.ppm())
 }

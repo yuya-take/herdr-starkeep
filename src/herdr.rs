@@ -39,7 +39,9 @@ pub fn socket_path() -> PathBuf {
 /// herdr answers one request per connection, so each call connects anew.
 pub fn call(method: &str, params: Value) -> Result<Value, String> {
     let stream = UnixStream::connect(socket_path()).map_err(|e| format!("cannot connect ({e})"))?;
-    stream.set_read_timeout(Some(Duration::from_secs(5))).map_err(|e| e.to_string())?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .map_err(|e| e.to_string())?;
     let mut writer = stream.try_clone().map_err(|e| e.to_string())?;
     let req = json!({ "id": "starkeep", "method": method, "params": params });
     writeln!(writer, "{req}").map_err(|e| e.to_string())?;
@@ -75,7 +77,9 @@ pub fn parse_snapshot(agents: &Value, workspaces: &Value) -> Snapshot {
                         agent: s(a, "display_agent").or_else(|| s(a, "agent")),
                         label: s(a, "label").or_else(|| s(a, "name")),
                         status: s(a, "agent_status").unwrap_or_else(|| "unknown".into()),
-                        title: s(a, "terminal_title_stripped").or_else(|| s(a, "title")).unwrap_or_default(),
+                        title: s(a, "terminal_title_stripped")
+                            .or_else(|| s(a, "title"))
+                            .unwrap_or_default(),
                     })
                 })
                 .collect()

@@ -63,7 +63,10 @@ pub fn parse(line: &str) -> Option<HookEvent> {
 }
 
 fn now_secs() -> f64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0)
 }
 
 fn trim(path: &PathBuf) {
@@ -71,7 +74,9 @@ fn trim(path: &PathBuf) {
     if meta.len() <= MAX_BYTES {
         return;
     }
-    let Ok(text) = std::fs::read_to_string(path) else { return };
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return;
+    };
     let lines: Vec<&str> = text.lines().collect();
     let keep = lines[lines.len().saturating_sub(KEEP_LINES)..].join("\n") + "\n";
     let _ = std::fs::write(path, keep);

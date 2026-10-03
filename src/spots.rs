@@ -23,7 +23,11 @@ pub struct Station {
 
 pub fn station(bay: usize) -> Station {
     let sx = 1 + bay as i32 * BAY_W;
-    Station { sx, desk_x: sx + 9, kx: sx + 12 }
+    Station {
+        sx,
+        desk_x: sx + 9,
+        kx: sx + 12,
+    }
 }
 
 pub fn spot_xy(bay: usize, spot: Spot) -> (f32, f32) {
@@ -52,7 +56,10 @@ pub struct Occupancy {
 }
 
 pub fn occupancy(apps: &[Apprentice], master: &str) -> Occupancy {
-    let mut o = Occupancy { seat: [None; 2], floor: [None; 3] };
+    let mut o = Occupancy {
+        seat: [None; 2],
+        floor: [None; 3],
+    };
     for p in apps.iter().filter(|p| p.master == master && p.active()) {
         match p.spot {
             Spot::Seat(i) => o.seat[i as usize] = Some(p.id),
@@ -105,7 +112,11 @@ fn relocate(p: &mut Apprentice, bay: usize, spot: Spot, scene_w: i32) {
 
 /// Fill freed seats from the floor, and freed floor spots from offdeck.
 pub fn promote_all(w: &mut World) {
-    let masters: Vec<(String, usize)> = w.knights.iter().map(|k| (k.pane_id.clone(), k.bay.unwrap_or(0))).collect();
+    let masters: Vec<(String, usize)> = w
+        .knights
+        .iter()
+        .map(|k| (k.pane_id.clone(), k.bay.unwrap_or(0)))
+        .collect();
     for (master, bay) in masters {
         promote(w, &master, bay);
     }
@@ -155,7 +166,9 @@ fn rank(s: Spot) -> u8 {
 /// The subagent finished: walk to the knight to hand over the result.
 pub fn finish_work(w: &mut World, id: u64) {
     let scene_w = w.scene_w;
-    let Some(pi) = w.apps.iter().position(|p| p.id == id) else { return };
+    let Some(pi) = w.apps.iter().position(|p| p.id == id) else {
+        return;
+    };
     let bay = w.knight(&w.apps[pi].master).and_then(|k| k.bay).unwrap_or(0);
     let p = &mut w.apps[pi];
     if p.spot == Spot::Offdeck {

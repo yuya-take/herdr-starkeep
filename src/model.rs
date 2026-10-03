@@ -195,7 +195,11 @@ impl World {
         self.knights.iter_mut().find(|k| k.pane_id == pane)
     }
     pub fn workspace_label<'a>(&'a self, id: &'a str) -> &'a str {
-        self.workspaces.iter().find(|w| w.id == id).map(|w| w.label.as_str()).unwrap_or(id)
+        self.workspaces
+            .iter()
+            .find(|w| w.id == id)
+            .map(|w| w.label.as_str())
+            .unwrap_or(id)
     }
     pub fn crew(&self, pane: &str) -> impl Iterator<Item = &Apprentice> {
         let pane = pane.to_string();
@@ -214,7 +218,11 @@ impl World {
         self.apps.retain(|p| alive.contains(&p.master.as_str()));
 
         for a in &snap.agents {
-            let ws_index = self.workspaces.iter().position(|w| w.id == a.workspace_id).unwrap_or(usize::MAX);
+            let ws_index = self
+                .workspaces
+                .iter()
+                .position(|w| w.id == a.workspace_id)
+                .unwrap_or(usize::MAX);
             let ws_label = self.workspace_label(&a.workspace_id).to_string();
             let name = match a.label.as_deref() {
                 Some(l) if !l.is_empty() => l.to_string(),
@@ -277,8 +285,16 @@ impl World {
             let label = self.workspace_label(ws);
             let parts = run.chunks(per_floor.max(1)).count();
             for (n, chunk) in run.chunks(per_floor.max(1)).enumerate() {
-                let name = if parts > 1 { format!("{} {}/{}", label, n + 1, parts) } else { label.to_string() };
-                floors.push(Floor { workspace_id: ws.clone(), name, knights: chunk.to_vec() });
+                let name = if parts > 1 {
+                    format!("{} {}/{}", label, n + 1, parts)
+                } else {
+                    label.to_string()
+                };
+                floors.push(Floor {
+                    workspace_id: ws.clone(),
+                    name,
+                    knights: chunk.to_vec(),
+                });
             }
         }
         floors
@@ -321,7 +337,10 @@ impl World {
             }
             HookKind::Stop => {
                 let by_id = ev.agent_id.as_deref().and_then(|id| {
-                    self.apps.iter().find(|p| p.active() && p.agent_id.as_deref() == Some(id)).map(|p| p.id)
+                    self.apps
+                        .iter()
+                        .find(|p| p.active() && p.agent_id.as_deref() == Some(id))
+                        .map(|p| p.id)
                 });
                 let target = by_id.or_else(|| {
                     self.apps
@@ -344,7 +363,14 @@ impl World {
         }
     }
 
-    pub fn summon(&mut self, master: &str, task: String, agent_id: Option<String>, session: Option<String>, replay: bool) -> bool {
+    pub fn summon(
+        &mut self,
+        master: &str,
+        task: String,
+        agent_id: Option<String>,
+        session: Option<String>,
+        replay: bool,
+    ) -> bool {
         if self.active_count(master) >= MAX_APPRENTICES {
             return false;
         }
@@ -360,7 +386,11 @@ impl World {
             master: master.to_string(),
             task,
             spot,
-            phase: if spot == Spot::Offdeck { Phase::Work } else { Phase::Enter },
+            phase: if spot == Spot::Offdeck {
+                Phase::Work
+            } else {
+                Phase::Enter
+            },
             x: (self.scene_w + 1) as f32,
             y: spots::LANE,
             path: VecDeque::new(),
@@ -399,7 +429,10 @@ impl World {
 
 /// Numeric part of an id like `w2:p10` (-> 10) or `w2:t1` (-> 1).
 fn id_number(id: &str) -> u32 {
-    id.rsplit(|c: char| !c.is_ascii_digit()).next().and_then(|s| s.parse().ok()).unwrap_or(0)
+    id.rsplit(|c: char| !c.is_ascii_digit())
+        .next()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -422,20 +455,38 @@ mod tests {
     fn world(agents: Vec<AgentInfo>) -> World {
         let mut w = World::new();
         let workspaces = vec![
-            Workspace { id: "w1".into(), label: "core".into() },
-            Workspace { id: "w2".into(), label: "apps".into() },
+            Workspace {
+                id: "w1".into(),
+                label: "core".into(),
+            },
+            Workspace {
+                id: "w2".into(),
+                label: "apps".into(),
+            },
         ];
         w.apply_snapshot(Snapshot { agents, workspaces });
         w
     }
 
     fn ev(kind: HookKind, pane: &str, id: Option<&str>, task: Option<&str>) -> HookEvent {
-        HookEvent { kind, pane: pane.into(), session: Some("s".into()), agent_id: id.map(Into::into), agent_type: None, task: task.map(Into::into), ts: 0.0 }
+        HookEvent {
+            kind,
+            pane: pane.into(),
+            session: Some("s".into()),
+            agent_id: id.map(Into::into),
+            agent_type: None,
+            task: task.map(Into::into),
+            ts: 0.0,
+        }
     }
 
     #[test]
     fn snapshot_orders_and_names_knights() {
-        let w = world(vec![agent("w2:p1", "w2", "idle"), agent("w1:p10", "w1", "working"), agent("w1:p2", "w1", "blocked")]);
+        let w = world(vec![
+            agent("w2:p1", "w2", "idle"),
+            agent("w1:p10", "w1", "working"),
+            agent("w1:p2", "w1", "blocked"),
+        ]);
         let panes: Vec<&str> = w.knights.iter().map(|k| k.pane_id.as_str()).collect();
         assert_eq!(panes, ["w1:p2", "w1:p10", "w2:p1"]);
         assert_eq!(w.knights[0].name, "claude:core");
@@ -454,7 +505,15 @@ mod tests {
         let spots: Vec<Spot> = w.apps.iter().map(|p| p.spot).collect();
         assert_eq!(
             spots,
-            [Spot::Seat(0), Spot::Seat(1), Spot::Floor(0), Spot::Floor(1), Spot::Floor(2), Spot::Offdeck, Spot::Offdeck]
+            [
+                Spot::Seat(0),
+                Spot::Seat(1),
+                Spot::Floor(0),
+                Spot::Floor(1),
+                Spot::Floor(2),
+                Spot::Offdeck,
+                Spot::Offdeck
+            ]
         );
         // Claim ids in order, then stop the first seat.
         for i in 0..7 {
@@ -482,7 +541,10 @@ mod tests {
         assert!(w.apps.is_empty());
         w.apply_snapshot(Snapshot {
             agents: vec![agent("w1:p1", "w1", "working")],
-            workspaces: vec![Workspace { id: "w1".into(), label: "core".into() }],
+            workspaces: vec![Workspace {
+                id: "w1".into(),
+                label: "core".into(),
+            }],
         });
         assert_eq!(w.apps.len(), 1);
     }
