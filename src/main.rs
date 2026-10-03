@@ -73,7 +73,7 @@ fn parse_args() -> Result<Args, String> {
                      \n  --demo        simulated knights, no herdr needed\
                      \n  --knights N   demo with N knights\
                      \n  --snapshot F  headless: run for --seconds and write a PPM of the frame\
-                     \n\nkeys: arrows move, enter zooms in / goes to the pane and closes, esc zooms out / closes, q quits\
+                     \n\nkeys: arrows select a space, enter zooms in / goes to the pane and closes, esc zooms out / closes, q quits\
                      \nhook events: {}",
                     hooks::events_path().display()
                 );
@@ -173,7 +173,7 @@ fn run(terminal: &mut DefaultTerminal, rx: Receiver<Msg>) -> io::Result<()> {
 fn handle(ev: Event, view: &mut View, w: &World) -> bool {
     match ev {
         Event::Key(k) if k.kind != KeyEventKind::Release => {
-            let large = matches!(view.layout.mode, Mode::Large { .. });
+            let zoomed = view.layout.mode == Mode::Zoom;
             match k.code {
                 KeyCode::Char('q') => return true,
                 KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => return true,
@@ -181,10 +181,7 @@ fn handle(ev: Event, view: &mut View, w: &World) -> bool {
                 KeyCode::Right | KeyCode::Char('l') => view.move_cursor(w, 1, 0),
                 KeyCode::Up | KeyCode::Char('k') => view.move_cursor(w, 0, -1),
                 KeyCode::Down | KeyCode::Char('j') => view.move_cursor(w, 0, 1),
-                KeyCode::Enter | KeyCode::Char(' ') if !large => {
-                    view.kb_used = true;
-                    view.focus = view.cursor.clone();
-                }
+                KeyCode::Enter | KeyCode::Char(' ') if !zoomed => view.enter_selected(w),
                 KeyCode::Enter => return jump(view),
                 // Esc steps back out of a close-up, otherwise closes Starkeep.
                 KeyCode::Esc if view.focus.is_some() => view.focus = None,
@@ -193,14 +190,12 @@ fn handle(ev: Event, view: &mut View, w: &World) -> bool {
             }
         }
         Event::Mouse(m) if m.kind == MouseEventKind::Down(MouseButton::Left) => match view.layout.mode {
-            Mode::Overview => {
-                if let Some(id) = view.knight_at(w, m.column, m.row) {
-                    view.cursor = Some(id.clone());
-                    view.focus = Some(id);
+            Mode::Rooms => {
+                if let Some((ws, knight)) = view.hit(w, m.column, m.row) {
+                    view.enter_room(w, &ws, knight);
                 }
             }
-            Mode::Large { focus: true } => view.focus = None,
-            Mode::Large { focus: false } => {}
+            Mode::Zoom => view.focus = None,
         },
         Event::Mouse(m) if m.kind == MouseEventKind::ScrollDown => view.move_cursor(w, 0, 1),
         Event::Mouse(m) if m.kind == MouseEventKind::ScrollUp => view.move_cursor(w, 0, -1),
@@ -211,11 +206,7 @@ fn handle(ev: Event, view: &mut View, w: &World) -> bool {
 
 /// Go to the knight's pane and close Starkeep. Returns true to quit.
 fn jump(view: &mut View) -> bool {
-    let target = match view.layout.mode {
-        Mode::Large { focus: true } => view.focus.clone(),
-        _ => view.cursor.clone(),
-    };
-    let Some(pane) = target else { return false };
+    let Some(pane) = view.focus.clone() else { return false };
     match herdr::focus_agent(&pane) {
         Ok(()) => true,
         Err(e) => {

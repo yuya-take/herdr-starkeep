@@ -124,8 +124,13 @@ impl Canvas {
     }
 
     pub fn sprite(&mut self, rows: &[&str], pal: &Pal, x: i32, y: i32, o: SpriteOpts) {
+        self.sprite_scaled(rows, pal, x, y, o, 1);
+    }
+
+    /// Draw a sprite with every pixel blown up to `s x s`.
+    pub fn sprite_scaled(&mut self, rows: &[&str], pal: &Pal, x: i32, y: i32, o: SpriteOpts, s: i32) {
         for (r, line) in rows.iter().enumerate() {
-            let yy = y + r as i32 + if o.bow && r < 6 { 1 } else { 0 };
+            let yy = y + (r as i32 + if o.bow && r < 6 { 1 } else { 0 }) * s;
             for (c, mut k) in line.chars().enumerate() {
                 if k == '.' {
                     continue;
@@ -137,7 +142,7 @@ impl Canvas {
                     k = 'h';
                 }
                 if let Some(col) = pal.get(k) {
-                    self.pi(x + c as i32, yy, col);
+                    self.rect(x + c as i32 * s, yy, s, s, col);
                 }
             }
         }

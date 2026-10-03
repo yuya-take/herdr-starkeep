@@ -1,20 +1,22 @@
-//! The two zoom levels: the cross-section of every floor, and a close-up of
-//! three bays. Picks which one to show and draws it.
+//! The two zoom levels: a grid of rooms, one per herdr Space, and a close-up
+//! of up to three bays in one Space. Picks which one to show and draws it.
 
 use crate::anim::{self, Starfield};
-use crate::model::{Apprentice, Floor, Knight, KnightState, Phase, Spot, World};
+use crate::model::{Apprentice, Knight, KnightState, Phase, Room, Spot, World};
 use crate::render::{fit, Canvas, Rgb, SpriteOpts};
 use crate::spots::{station, BAY_W};
 use crate::sprites::{self, *};
 
-/// Columns one desk takes in the overview.
-pub const DESK_W: i32 = 22;
-/// Rows one floor takes in the overview.
-const FLOOR_H: i32 = 10;
+/// Desks drawn per room; more knights than this show as "+N".
+pub const MAX_DESKS: usize = 4;
+/// Rooms shown at once: up to 2 rows of 3.
+const MAX_GRID_ROWS: usize = 2;
+const MAX_GRID_COLS: usize = 3;
 
 const HB: Rgb = Rgb::hex(0x0c1020);
 const HEAD_FG: Rgb = Rgb::hex(0x9fb3e0);
 const MUTED: Rgb = Rgb::hex(0x6f7fa8);
+const SELECT: Rgb = Rgb::hex(0x2a3766);
 const AMBER: Rgb = Rgb::hex(0xffd166);
 const AMBER_DIM: Rgb = Rgb::hex(0xb8892c);
 const AMBER_INK: Rgb = Rgb::hex(0x1a1200);
@@ -24,122 +26,156 @@ const GREEN: Rgb = Rgb::hex(0x2fae5b);
 const SPACE: Rgb = Rgb::hex(0x05080f);
 const WALL: Rgb = Rgb::hex(0x1a2036);
 const FRAME: Rgb = Rgb::hex(0x2e3858);
+const GAP: Rgb = Rgb::hex(0x0b0f1e);
+const TAG_BG: Rgb = Rgb::hex(0x0e1324);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Mode {
-    Overview,
-    Large { focus: bool },
+    /// Every Space as a room in a grid.
+    Rooms,
+    /// Close-up of the focused knight's Space.
+    Zoom,
 }
 
 pub struct Layout {
     pub mode: Mode,
-    /// pane ids shown in the large view, one per bay
+    /// pane ids shown in the close-up, one per bay
     pub shown: Vec<String>,
-    pub floor_ws: Option<String>,
+    pub zoom_ws: Option<String>,
     pub start: usize,
     pub total: usize,
     pub cols: u16,
     pub rows: u16,
-    pub per_floor: usize,
     pub bays: usize,
-    pub floors_visible: usize,
-    /// Left offset that centres the large scene.
+    pub grid_rows: usize,
+    pub grid_cols: usize,
+    pub tile_w: i32,
+    pub tile_h: i32,
+    /// Left offset that centres the close-up scene.
     pub ox: i32,
 }
 
 pub struct View {
+    /// Knight shown in the close-up.
     pub focus: Option<String>,
-    pub cursor: Option<String>,
+    /// Selected room (workspace id) in the grid.
+    pub room: Option<String>,
     pub kb_used: bool,
+    /// First visible grid row.
     pub scroll: usize,
     pub layout: Layout,
     pub notice: Option<(String, f32)>,
     layout_key: String,
     big_stars: Option<Starfield>,
-    floor_stars: Vec<Starfield>,
+    room_stars: Vec<Starfield>,
+}
+
+/// Grid shape for `n` rooms: 1x1, 1x2, 1x3, 2x2, then 2x3 (scrolling past 6).
+/// Narrow or short panes get fewer columns or rows.
+fn grid_shape(n: usize, cols: u16, rows: u16) -> (usize, usize) {
+    let (mut gr, mut gc) = match n {
+        0 | 1 => (1, 1),
+        2 => (1, 2),
+        3 => (1, 3),
+        4 => (2, 2),
+        _ => (MAX_GRID_ROWS, MAX_GRID_COLS),
+    };
+    let max_c = (cols as usize / 28).clamp(1, MAX_GRID_COLS);
+    let max_r = ((rows as usize).saturating_sub(2) / 9).clamp(1, MAX_GRID_ROWS);
+    if gc > max_c {
+        gc = max_c;
+        gr = n.div_ceil(gc).clamp(1, MAX_GRID_ROWS);
+    }
+    (gr.min(max_r), gc)
 }
 
 impl View {
     pub fn new() -> View {
         View {
             focus: None,
-            cursor: None,
+            room: None,
             kb_used: false,
             scroll: 0,
             layout: Layout {
-                mode: Mode::Overview,
+                mode: Mode::Rooms,
                 shown: Vec::new(),
-                floor_ws: None,
+                zoom_ws: None,
                 start: 0,
                 total: 0,
                 cols: 112,
                 rows: 34,
-                per_floor: 5,
                 bays: 3,
-                floors_visible: 3,
+                grid_rows: 1,
+                grid_cols: 1,
+                tile_w: 112,
+                tile_h: 32,
                 ox: 0,
             },
             notice: None,
             layout_key: String::new(),
             big_stars: None,
-            floor_stars: Vec::new(),
+            room_stars: Vec::new(),
         }
     }
 
     // ---------- layout ----------
 
     pub fn apply_layout(&mut self, w: &mut World, cols: u16, rows: u16) {
-        let per_floor = ((cols as i32 - 2) / DESK_W).max(1) as usize;
         let bays = ((cols as i32 - 1) / BAY_W).clamp(1, 3) as usize;
         let scene_w = bays as i32 * BAY_W + 1;
-        let floors_visible = ((rows as i32 - 2) / FLOOR_H).max(1) as usize;
-
-        if self.cursor.as_ref().is_none_or(|c| w.knight(c).is_none()) {
-            self.cursor = w.knights.first().map(|k| k.pane_id.clone());
+        let rooms = w.rooms();
+        if self
+            .room
+            .as_ref()
+            .is_none_or(|r| !rooms.iter().any(|x| &x.workspace_id == r))
+        {
+            self.room = rooms.first().map(|r| r.workspace_id.clone());
         }
+        let (grid_rows, grid_cols) = grid_shape(rooms.len(), cols, rows);
 
         let mut l = Layout {
-            mode: Mode::Overview,
+            mode: Mode::Rooms,
             shown: Vec::new(),
-            floor_ws: None,
+            zoom_ws: None,
             start: 0,
             total: 0,
             cols,
             rows,
-            per_floor,
             bays,
-            floors_visible,
+            grid_rows,
+            grid_cols,
+            tile_w: cols as i32 / grid_cols as i32,
+            tile_h: (rows as i32 - 2) / grid_rows as i32,
             ox: ((cols as i32 - scene_w) / 2).max(0),
         };
         if let Some(f) = self.focus.as_ref().and_then(|id| w.knight(id)) {
             let fl: Vec<&Knight> = w.knights.iter().filter(|k| k.workspace_id == f.workspace_id).collect();
             let i = fl.iter().position(|k| k.pane_id == f.pane_id).unwrap_or(0);
             let start = (i as i32 - 1).min(fl.len() as i32 - bays as i32).max(0) as usize;
-            l.mode = Mode::Large { focus: true };
+            l.mode = Mode::Zoom;
             l.shown = fl.iter().skip(start).take(bays).map(|k| k.pane_id.clone()).collect();
-            l.floor_ws = Some(f.workspace_id.clone());
+            l.zoom_ws = Some(f.workspace_id.clone());
             l.start = start;
             l.total = fl.len();
         } else {
             self.focus = None;
-            if w.knights.len() <= bays {
-                l.mode = Mode::Large { focus: false };
-                l.shown = w.knights.iter().map(|k| k.pane_id.clone()).collect();
-            }
         }
 
-        // Keep the cursor's floor on screen in the overview.
-        let floors = w.floors(per_floor);
-        if let Some(c) = &self.cursor {
-            if let Some(fi) = floors.iter().position(|f| f.knights.contains(c)) {
-                if fi < self.scroll {
-                    self.scroll = fi;
-                } else if fi >= self.scroll + floors_visible {
-                    self.scroll = fi + 1 - floors_visible;
-                }
+        // Keep the selected room's grid row on screen.
+        let total_rows = rooms.len().div_ceil(grid_cols);
+        if let Some(ri) = self
+            .room
+            .as_ref()
+            .and_then(|r| rooms.iter().position(|x| &x.workspace_id == r))
+        {
+            let row = ri / grid_cols;
+            if row < self.scroll {
+                self.scroll = row;
+            } else if row >= self.scroll + grid_rows {
+                self.scroll = row + 1 - grid_rows;
             }
         }
-        self.scroll = self.scroll.min(floors.len().saturating_sub(floors_visible));
+        self.scroll = self.scroll.min(total_rows.saturating_sub(grid_rows));
 
         w.scene_w = scene_w;
         let key = format!("{:?}:{}:{}", l.mode, l.shown.join(","), bays);
@@ -164,6 +200,14 @@ impl View {
         self.layout = l;
     }
 
+    /// Rooms currently on screen, with their tile index.
+    fn visible_rooms(&self, rooms: &[Room]) -> std::ops::Range<usize> {
+        let per = self.layout.grid_cols;
+        let a = (self.scroll * per).min(rooms.len());
+        let b = ((self.scroll + self.layout.grid_rows) * per).min(rooms.len());
+        a..b
+    }
+
     pub fn tick(&mut self, w: &mut World, dt: f32) {
         if let Some((_, t)) = &mut self.notice {
             *t -= dt;
@@ -171,32 +215,29 @@ impl View {
                 self.notice = None;
             }
         }
-        let l = &self.layout;
         let sw = w.scene_w;
         if self.big_stars.is_none() {
-            self.big_stars = Some(Starfield::new(w, 46, 12));
+            self.big_stars = Some(Starfield::new(w, 46));
         }
-        let shown_working = l
-            .shown
-            .iter()
-            .filter(|id| w.knight(id).is_some_and(|k| k.state == KnightState::Working))
-            .count();
-        if let Some(sf) = &mut self.big_stars {
-            sf.advance(&mut w.rng, dt, 0.25 + shown_working as f32 * 0.65, (sw - 10) as f32, 12);
-        }
-        let floors = w.floors(l.per_floor);
-        while self.floor_stars.len() < l.floors_visible {
-            let sf = Starfield::new(w, 16, 4);
-            self.floor_stars.push(sf);
-        }
-        let width = l.cols as f32;
-        for (slot, f) in floors.iter().skip(self.scroll).take(l.floors_visible).enumerate() {
-            let working = f
-                .knights
-                .iter()
+        let working = |w: &World, ids: &[String]| {
+            ids.iter()
                 .filter(|id| w.knight(id).is_some_and(|k| k.state == KnightState::Working))
-                .count();
-            self.floor_stars[slot].advance(&mut w.rng, dt, 0.2 + working as f32 * 0.45, width, 4);
+                .count() as f32
+        };
+        let shown_working = working(w, &self.layout.shown);
+        if let Some(sf) = &mut self.big_stars {
+            sf.advance(&mut w.rng, dt, 0.25 + shown_working * 0.65, (sw - 10) as f32);
+        }
+        let rooms = w.rooms();
+        let tiles = self.layout.grid_rows * self.layout.grid_cols;
+        while self.room_stars.len() < tiles {
+            let sf = Starfield::new(w, 18);
+            self.room_stars.push(sf);
+        }
+        let width = self.layout.tile_w as f32;
+        for (tile, ri) in self.visible_rooms(&rooms).enumerate() {
+            let warp = 0.2 + working(w, &rooms[ri].knights) * 0.45;
+            self.room_stars[tile].advance(&mut w.rng, dt, warp, width);
         }
     }
 
@@ -204,66 +245,79 @@ impl View {
 
     pub fn move_cursor(&mut self, w: &World, dx: i32, dy: i32) {
         self.kb_used = true;
-        let Some(cur) = self.cursor.clone() else { return };
         match self.layout.mode {
-            Mode::Overview => {
-                let floors = w.floors(self.layout.per_floor);
-                let Some(fi) = floors.iter().position(|f| f.knights.contains(&cur)) else {
+            Mode::Rooms => {
+                let rooms = w.rooms();
+                if rooms.is_empty() {
                     return;
-                };
-                let pos = floors[fi].knights.iter().position(|k| *k == cur).unwrap_or(0) as i32;
-                if dy != 0 {
-                    let nf = (fi as i32 + dy).clamp(0, floors.len() as i32 - 1) as usize;
-                    let row = &floors[nf].knights;
-                    self.cursor = Some(row[(pos as usize).min(row.len() - 1)].clone());
-                } else {
-                    // Left and right walk through every knight in floor order.
-                    let all: Vec<&String> = floors.iter().flat_map(|f| f.knights.iter()).collect();
-                    let i = all.iter().position(|k| **k == cur).unwrap_or(0) as i32;
-                    self.cursor = Some(all[(i + dx).clamp(0, all.len() as i32 - 1) as usize].clone());
                 }
+                let i = self
+                    .room
+                    .as_ref()
+                    .and_then(|r| rooms.iter().position(|x| &x.workspace_id == r))
+                    .unwrap_or(0) as i32;
+                let step = dx + dy * self.layout.grid_cols as i32;
+                let next = (i + step).clamp(0, rooms.len() as i32 - 1) as usize;
+                self.room = Some(rooms[next].workspace_id.clone());
             }
-            Mode::Large { focus } => {
+            Mode::Zoom => {
+                let Some(cur) = self.focus.clone() else { return };
                 if dx == 0 {
                     return;
                 }
-                let pool: Vec<&Knight> = match focus {
-                    true => {
-                        let ws = self.layout.floor_ws.clone().unwrap_or_default();
-                        w.knights.iter().filter(|k| k.workspace_id == ws).collect()
-                    }
-                    false => w.knights.iter().collect(),
-                };
+                let ws = self.layout.zoom_ws.clone().unwrap_or_default();
+                let pool: Vec<&Knight> = w.knights.iter().filter(|k| k.workspace_id == ws).collect();
                 let i = pool.iter().position(|k| k.pane_id == cur).unwrap_or(0) as i32;
-                let next = pool[(i + dx).clamp(0, pool.len() as i32 - 1) as usize].pane_id.clone();
-                if focus {
-                    self.focus = Some(next.clone());
-                }
-                self.cursor = Some(next);
+                let next = pool[(i + dx).clamp(0, pool.len() as i32 - 1) as usize];
+                self.focus = Some(next.pane_id.clone());
             }
         }
     }
 
-    /// Which knight is under a cell in the overview.
-    pub fn knight_at(&self, w: &World, col: u16, row: u16) -> Option<String> {
-        if self.layout.mode != Mode::Overview {
+    /// Zoom into a room, starting with a knight that needs an answer.
+    pub fn enter_room(&mut self, w: &World, ws: &str, knight: Option<String>) {
+        self.room = Some(ws.to_string());
+        let ks: Vec<&Knight> = w.knights.iter().filter(|k| k.workspace_id == ws).collect();
+        let pick = knight.or_else(|| {
+            ks.iter()
+                .find(|k| k.state == KnightState::Blocked)
+                .or(ks.first())
+                .map(|k| k.pane_id.clone())
+        });
+        match pick {
+            Some(id) => self.focus = Some(id),
+            None => self.notice = Some(("no knights in this space".into(), 1.5)),
+        }
+    }
+
+    pub fn enter_selected(&mut self, w: &World) {
+        if let Some(ws) = self.room.clone() {
+            self.kb_used = true;
+            self.enter_room(w, &ws, None);
+        }
+    }
+
+    /// Room and knight under a cell in the grid.
+    pub fn hit(&self, w: &World, col: u16, row: u16) -> Option<(String, Option<String>)> {
+        if self.layout.mode != Mode::Rooms {
             return None;
         }
-        let floors = w.floors(self.layout.per_floor);
-        let (col, row) = (col as i32, row as i32);
-        for (slot, f) in floors
-            .iter()
-            .skip(self.scroll)
-            .take(self.layout.floors_visible)
-            .enumerate()
-        {
-            let r0 = 2 + slot as i32 * FLOOR_H;
-            if row >= r0 && row <= r0 + 8 {
-                let pos = ((col - 1) / DESK_W).max(0) as usize;
-                return f.knights.get(pos).cloned();
-            }
+        let l = &self.layout;
+        let (col, row) = (col as i32, row as i32 - 1);
+        if row < 0 {
+            return None;
         }
-        None
+        let (gc, gr) = (col / l.tile_w, row / l.tile_h);
+        if gc >= l.grid_cols as i32 || gr >= l.grid_rows as i32 {
+            return None;
+        }
+        let rooms = w.rooms();
+        let ri = (self.scroll + gr as usize) * l.grid_cols + gc as usize;
+        let room = rooms.get(ri)?;
+        let d = room.knights.len().clamp(1, MAX_DESKS) as i32;
+        let slot_w = ((l.tile_w - 3) / d).max(1);
+        let slot = ((col - gc * l.tile_w - 1) / slot_w).clamp(0, d - 1) as usize;
+        Some((room.workspace_id.clone(), room.knights.get(slot).cloned()))
     }
 
     // ---------- drawing ----------
@@ -271,13 +325,13 @@ impl View {
     pub fn draw(&self, w: &World, cv: &mut Canvas) {
         let l = &self.layout;
         match l.mode {
-            Mode::Overview => {
-                cv.begin(l.cols, l.rows, Rgb::hex(0x0b0f1e));
-                self.draw_overview(w, cv);
+            Mode::Rooms => {
+                cv.begin(l.cols, l.rows, GAP);
+                self.draw_rooms(w, cv);
             }
-            Mode::Large { focus } => {
+            Mode::Zoom => {
                 cv.begin(l.cols, l.rows, WALL);
-                self.draw_large(w, cv, focus);
+                self.draw_large(w, cv);
             }
         }
         if let Some((msg, _)) = &self.notice {
@@ -302,8 +356,8 @@ impl View {
         let row = cv.rows - 1;
         cv.text(0, row, &fit("", cv.cols as usize), HEAD_FG, HB);
         let focus_ws = match self.layout.mode {
-            Mode::Large { focus: true } => self.layout.floor_ws.clone(),
-            _ => None,
+            Mode::Zoom => self.layout.zoom_ws.clone(),
+            Mode::Rooms => None,
         };
         let mut col = 1;
         let mut i = 0;
@@ -394,11 +448,12 @@ impl View {
             for s in &sf.stars {
                 let sx = 5.0 + s.x * span;
                 let len = 1 + (warp * s.s * 1.6).round() as i32;
-                cv.p(sx, (4 + s.y) as f32, Rgb::hex(0xe6f1ff));
+                let sy = 4 + (s.y * 12.0) as i32;
+                cv.p(sx, sy as f32, Rgb::hex(0xe6f1ff));
                 for k in 1..=len {
                     let xx = sx.round() as i32 + k;
                     if xx <= sw - 6 {
-                        cv.pi(xx, 4 + s.y, Rgb::hex(0x9fc2ff).mix(SPACE, k as f32 / (len + 1) as f32));
+                        cv.pi(xx, sy, Rgb::hex(0x9fc2ff).mix(SPACE, k as f32 / (len + 1) as f32));
                     }
                 }
             }
@@ -685,7 +740,7 @@ impl View {
                 }
             );
         }
-        let selected = self.kb_used && self.cursor.as_deref() == Some(k.pane_id.as_str());
+        let selected = self.focus.as_deref() == Some(k.pane_id.as_str());
         for (i, s) in [&k.name, &l1, &l2, &l3, &l4].iter().enumerate() {
             let (f, b) = match i {
                 0 if selected => (bg, fg),
@@ -705,7 +760,7 @@ impl View {
         }
     }
 
-    fn draw_large(&self, w: &World, cv: &mut Canvas, focus: bool) {
+    fn draw_large(&self, w: &World, cv: &mut Canvas) {
         let l = &self.layout;
         cv.ox = l.ox;
         self.draw_bg(w, cv);
@@ -728,239 +783,68 @@ impl View {
             self.draw_app(w, cv, p);
         }
         cv.ox = 0;
-        if focus {
-            let ws = l.floor_ws.as_deref().unwrap_or("");
-            let end = l.start + l.shown.len();
-            self.header(
-                w,
-                cv,
-                &format!(
-                    " STARKEEP  {} {}  bays {}-{} of {}   esc: all floors  enter: go to pane",
-                    ws,
-                    w.workspace_label(ws),
-                    l.start + 1,
-                    end,
-                    l.total
-                ),
-            );
-        } else if w.knights.is_empty() {
-            self.header(w, cv, " STARKEEP  training floor   waiting for knights...");
-        } else {
-            self.header(w, cv, " STARKEEP  training floor   enter: go to pane  esc: close");
-        }
+        let ws = l.zoom_ws.as_deref().unwrap_or("");
+        let end = l.start + l.shown.len();
+        self.header(
+            w,
+            cv,
+            &format!(
+                " STARKEEP  {} {}  bays {}-{} of {}   arrows: move  enter: go to pane  esc: back",
+                ws,
+                w.workspace_label(ws),
+                l.start + 1,
+                end,
+                l.total
+            ),
+        );
         self.roster(w, cv);
     }
 
-    // ---------- overview ----------
+    // ---------- rooms ----------
 
-    fn draw_mini(&self, w: &World, cv: &mut Canvas, k: Option<&Knight>, pos: i32, py0: i32, r0: i32) {
-        let sx = 1 + pos * DESK_W;
-        let Some(k) = k else {
-            cv.rect(sx + 1, py0 + 9, 9, 1, Rgb::hex(0x4a5470));
-            cv.rect(sx + 1, py0 + 10, 9, 2, Rgb::hex(0x232a40));
-            cv.text(
-                sx,
-                r0 + 8,
-                &fit("   - vacant -", DESK_W as usize),
-                Rgb::hex(0x3c4668),
-                Rgb::hex(0x0e1324),
-            );
-            return;
-        };
-        let t = w.time;
-        let mut ky = py0 + 3;
-        let mut closed = false;
-        if k.state == KnightState::Idle {
-            ky -= ((t * 1.5) as i32 + pos) % 2;
-            closed = true;
-        }
-        let pal = self.knight_pal(w, k);
-        cv.sprite(
-            &KNIGHT_MINI,
-            &pal,
-            sx + 2,
-            ky,
-            SpriteOpts {
-                closed,
-                back: k.state == KnightState::Unknown,
-                bow: false,
-            },
-        );
-        cv.rect(sx + 1, py0 + 9, 9, 1, Rgb::hex(0x9aa6c4));
-        cv.rect(sx + 1, py0 + 10, 9, 2, Rgb::hex(0x2f3a5c));
-        for i in 0..3 {
-            let lit = ((t * 3.0 + i as f32 * 1.3 + sx as f32) as i32) % 3 != 0;
-            cv.pi(
-                sx + 3 + i * 2,
-                py0 + 11,
-                if lit { k.crystal } else { k.crystal.mix(BLACK, 0.6) },
-            );
-        }
-        let g = ((t * 8.0) as i32 + k.color_idx as i32) % 2;
-        match k.state {
-            KnightState::Working => {
-                cv.pi(sx + 3, py0 + 9 - g, k.skin);
-                cv.pi(sx + 7, py0 + 9 - (1 - g), k.skin);
-            }
-            KnightState::Blocked => {
-                cv.pi(sx + 9, ky + 1 - ((t * 4.0) as i32 % 2), k.skin);
-                cv.rect(sx + 9, ky + 2, 1, 3, Rgb::hex(0x4a4f8c));
-                cv.rect(sx + 10, py0, 3, 5, BUBBLE);
-                if (t * 3.0) as i32 % 2 == 0 {
-                    cv.pi(sx + 11, py0 + 1, RED);
-                    cv.pi(sx + 11, py0 + 2, RED);
-                    cv.pi(sx + 11, py0 + 4, RED);
-                }
-            }
-            KnightState::Done => {
-                cv.rect(sx + 10, py0, 3, 5, BUBBLE);
-                cv.pi(sx + 10, py0 + 2, GREEN);
-                cv.pi(sx + 11, py0 + 3, GREEN);
-                cv.pi(sx + 12, py0 + 1, GREEN);
-            }
-            KnightState::Idle => {
-                let ang = t * 1.6 + pos as f32;
-                cv.p(
-                    (sx + 5) as f32 + ang.cos() * 5.0,
-                    (ky + 4) as f32 + ang.sin() * 3.0,
-                    k.crystal.mix(WHITE, 0.4),
-                );
-            }
-            KnightState::Unknown => {}
-        }
-        // Apprentices in miniature: reporters first, then by arrival.
-        let crew: Vec<&Apprentice> = w.crew(&k.pane_id).filter(|p| p.phase != Phase::Exit).collect();
-        let mut order: Vec<&Apprentice> = crew.iter().copied().filter(|p| !p.active()).collect();
-        let mut working: Vec<&Apprentice> = crew.iter().copied().filter(|p| p.active()).collect();
-        working.sort_by_key(|p| p.id);
-        order.extend(working);
-        for (n, p) in order.iter().take(3).enumerate() {
-            let x = sx + 10 + n as i32 * 4;
-            let y = py0 + 7;
-            let back = !p.active();
-            let bob = if !back && ((t * 4.0) as i64 + p.id as i64) % 2 == 1 {
-                1
-            } else {
-                0
-            };
-            cv.sprite(
-                &APPRENTICE_MINI,
-                &apprentice_pal(k.crystal, p.skin, p.hair),
-                x,
-                y - bob,
-                SpriteOpts {
-                    back,
-                    ..Default::default()
-                },
-            );
-            if back && (t * 4.0) as i32 % 2 == 1 {
-                cv.rect(x + 1, y - 2, 2, 1, k.crystal);
-            }
-        }
-        let extra = order.len().saturating_sub(3);
-        let right = if extra > 0 { format!("+{extra} ") } else { String::new() };
-        let label = fit(
-            &format!(" {} {}", k.state.glyph(), k.name),
-            DESK_W as usize - right.len(),
-        ) + &right;
-        let (mut fg, mut bg) = (k.crystal, Rgb::hex(0x0e1324));
-        match k.state {
-            KnightState::Blocked => {
-                fg = AMBER_INK;
-                bg = if (t * 2.0) as i32 % 2 == 0 { AMBER } else { AMBER_DIM };
-            }
-            KnightState::Idle | KnightState::Unknown => fg = k.crystal.mix(Rgb::hex(0x0e1324), 0.35),
-            _ => {}
-        }
-        if self.kb_used && self.cursor.as_deref() == Some(k.pane_id.as_str()) && k.state != KnightState::Blocked {
-            bg = Rgb::hex(0x2a3766);
-        }
-        cv.text(sx, r0 + 8, &label, fg, bg);
-    }
-
-    fn draw_overview(&self, w: &World, cv: &mut Canvas) {
+    fn draw_rooms(&self, w: &World, cv: &mut Canvas) {
         let l = &self.layout;
-        let floors: Vec<Floor> = w.floors(l.per_floor);
-        let cols = cv.cols;
-        for (slot, f) in floors.iter().skip(self.scroll).take(l.floors_visible).enumerate() {
-            let r0 = 2 + slot as i32 * FLOOR_H;
-            let py0 = (r0 + 1) * 2;
-            cv.rect(0, py0, cv.w, 9, WALL);
-            cv.rect(1, py0 + 1, cv.w - 2, 4, SPACE);
-            if let Some(sf) = self.floor_stars.get(slot) {
-                for s in &sf.stars {
-                    let sx = 2.0 + s.x * (cv.w - 5) as f32;
-                    let len = 1 + s.s.round() as i32;
-                    let y = py0 + 1 + s.y;
-                    cv.p(sx, y as f32, Rgb::hex(0xe6f1ff));
-                    for k in 1..=len {
-                        let xx = sx.round() as i32 + k;
-                        if xx <= cv.w - 2 {
-                            cv.pi(xx, y, Rgb::hex(0x9fc2ff).mix(SPACE, k as f32 / (len + 1) as f32));
-                        }
-                    }
-                }
-            }
-            for i in 0..=l.per_floor as i32 {
-                cv.rect(i * DESK_W, py0 + 1, 1, 4, FRAME);
-            }
-            cv.rect(0, py0 + 8, cv.w, 1, Rgb::hex(0x2a3354));
-            for y in py0 + 9..py0 + 14 {
-                for x in 0..cv.w {
-                    let odd = ((x >> 3) + (y >> 1)) & 1 == 1;
-                    cv.pi(x, y, if odd { Rgb::hex(0x151b2d) } else { Rgb::hex(0x192036) });
-                }
-            }
-            for pos in 0..l.per_floor {
-                let k = f.knights.get(pos).and_then(|id| w.knight(id));
-                self.draw_mini(w, cv, k, pos as i32, py0, r0);
-            }
-
-            let ks: Vec<&Knight> = f.knights.iter().filter_map(|id| w.knight(id)).collect();
-            let working = ks.iter().filter(|k| k.state == KnightState::Working).count();
-            let blocked = ks.iter().filter(|k| k.state == KnightState::Blocked).count();
-            let apps = f
-                .knights
-                .iter()
-                .map(|id| w.crew(id).filter(|p| p.phase != Phase::Exit).count())
-                .sum::<usize>();
-            let left = format!(" {} {}", f.workspace_id, f.name);
-            cv.text(0, r0, &fit(&left, cols as usize), HEAD_FG, HB);
-            if blocked > 0 {
-                cv.text(crate::render::str_width(&left) as i32 + 1, r0, " ! ", AMBER_INK, AMBER);
-            }
-            let right = format!(
-                "{} knights  {} working  {}{} apprentices ",
-                ks.len(),
-                working,
-                if blocked > 0 {
-                    format!("{blocked} waiting  ")
-                } else {
-                    String::new()
-                },
-                apps
-            );
-            cv.text(cols - right.len() as i32, r0, &right, MUTED, HB);
+        let rooms = w.rooms();
+        let range = self.visible_rooms(&rooms);
+        // Double-size sprites only when every room on screen has space for them,
+        // so the rooms stay the same scale.
+        let slot_w = |r: &Room| (l.tile_w - 3) / r.knights.len().clamp(1, MAX_DESKS) as i32;
+        let big = (l.tile_h - 2) * 2 >= 44 && rooms[range.clone()].iter().all(|r| slot_w(r) >= 26);
+        let scale = if big { 2 } else { 1 };
+        for (tile, ri) in range.clone().enumerate() {
+            let x0 = (tile % l.grid_cols) as i32 * l.tile_w;
+            let y0 = 1 + (tile / l.grid_cols) as i32 * l.tile_h;
+            let selected = self.kb_used && self.room.as_deref() == Some(rooms[ri].workspace_id.as_str());
+            self.draw_room(w, cv, &rooms[ri], (tile, scale), (x0, y0), selected);
+        }
+        if rooms.is_empty() {
+            let msg = "waiting for herdr spaces...";
+            cv.text((cv.cols - msg.len() as i32) / 2, cv.rows / 2, msg, MUTED, GAP);
         }
 
-        let blocked_in = |fs: &[Floor]| {
-            fs.iter()
-                .flat_map(|f| f.knights.iter())
-                .filter(|id| w.knight(id).is_some_and(|k| k.state == KnightState::Blocked))
-                .count()
-        };
-        let above = blocked_in(&floors[..self.scroll.min(floors.len())]);
-        let below = blocked_in(floors.get(self.scroll + l.floors_visible..).unwrap_or(&[]));
-        let mut title = " STARKEEP  all floors   click or enter: zoom in  esc: close".to_string();
-        if floors.len() > l.floors_visible {
+        let total_rows = rooms.len().div_ceil(l.grid_cols);
+        let mut title = format!(
+            " STARKEEP  {} spaces   arrows: select  enter: zoom in  esc: close",
+            rooms.len()
+        );
+        if total_rows > l.grid_rows {
             title += &format!(
-                "   floors {}-{} of {}",
+                "   rows {}-{} of {}",
                 self.scroll + 1,
-                (self.scroll + l.floors_visible).min(floors.len()),
-                floors.len()
+                (self.scroll + l.grid_rows).min(total_rows),
+                total_rows
             );
         }
         self.header(w, cv, &title);
+
+        let blocked_in = |rs: &[Room]| {
+            rs.iter()
+                .flat_map(|r| r.knights.iter())
+                .filter(|id| w.knight(id).is_some_and(|k| k.state == KnightState::Blocked))
+                .count()
+        };
+        let above = blocked_in(&rooms[..range.start]);
+        let below = blocked_in(&rooms[range.end..]);
         if above > 0 || below > 0 {
             let mut s = String::new();
             if above > 0 {
@@ -969,10 +853,221 @@ impl View {
             if below > 0 {
                 s += &format!(" ▼ {below} waiting ");
             }
-            let col = cols - 22 - crate::render::str_width(&s) as i32;
+            let col = cv.cols - 22 - crate::render::str_width(&s) as i32;
             cv.text(col, 0, &s, AMBER_INK, AMBER);
         }
         self.roster(w, cv);
+    }
+
+    /// One Space: header, window, a desk per knight (up to four), name tags.
+    fn draw_room(&self, w: &World, cv: &mut Canvas, room: &Room, tile: (usize, i32), at: (i32, i32), selected: bool) {
+        let ((tile, s), (x0, y0)) = (tile, at);
+        let l = &self.layout;
+        let rw = l.tile_w - 1; // the last column is the gap between rooms
+        let tag_row = y0 + l.tile_h - 1;
+        let pt = (y0 + 1) * 2; // first pixel row under the header
+        let pb = tag_row * 2; // first pixel row of the name tags
+        let n = room.knights.len();
+        let d = n.min(MAX_DESKS);
+        let slot_w = (rw - 2) / d.max(1) as i32;
+        let b = pb - 14 * s; // top of the desk scene
+        let lit = n > 0;
+
+        // Wall, window and floor.
+        cv.rect(x0, pt, rw, pb - pt, WALL);
+        let (wx, wy, ww) = (x0 + 1, pt + 1, rw - 2);
+        let wh = (b + 5 * s - wy).max(3);
+        cv.rect(wx, wy - 1, ww, 1, FRAME);
+        cv.rect(wx, wy, ww, wh, if lit { SPACE } else { Rgb::hex(0x03050a) });
+        cv.rect(wx, wy + wh, ww, 1, FRAME);
+        if let Some(sf) = self.room_stars.get(tile) {
+            let (head, tail) = match lit {
+                true => (Rgb::hex(0xe6f1ff), Rgb::hex(0x9fc2ff)),
+                false => (Rgb::hex(0x5a6584), Rgb::hex(0x2a3350)),
+            };
+            for st in &sf.stars {
+                let sx = wx as f32 + st.x * (ww - 1) as f32;
+                let sy = wy + ((st.y * wh as f32) as i32).min(wh - 1);
+                let len = 1 + st.s.round() as i32;
+                cv.p(sx, sy as f32, head);
+                for k in 1..=len {
+                    let xx = sx.round() as i32 + k;
+                    if xx < wx + ww {
+                        cv.pi(xx, sy, tail.mix(SPACE, k as f32 / (len + 1) as f32));
+                    }
+                }
+            }
+        }
+        for i in 1..d as i32 {
+            cv.rect(x0 + 1 + i * slot_w, wy, 1, wh, FRAME);
+        }
+        cv.rect(x0, b + 8 * s, rw, s, Rgb::hex(0x2a3354));
+        for y in b + 9 * s..pb {
+            for x in x0..x0 + rw {
+                let odd = ((x >> 3) + ((y - pt) >> s)) & 1 == 1;
+                cv.pi(x, y, if odd { Rgb::hex(0x151b2d) } else { Rgb::hex(0x192036) });
+            }
+        }
+
+        // Header: Space name, plus waiting and overflow badges.
+        let ks: Vec<&Knight> = room.knights.iter().filter_map(|id| w.knight(id)).collect();
+        let (fg, bg) = if selected {
+            (Rgb::hex(0xdfe7ff), SELECT)
+        } else {
+            (HEAD_FG, HB)
+        };
+        cv.text(
+            x0,
+            y0,
+            &fit(&format!(" {} {}", room.workspace_id, room.name), rw as usize),
+            fg,
+            bg,
+        );
+        let mut badges: Vec<(String, Rgb, Rgb)> = Vec::new();
+        let hidden = ks.len().saturating_sub(MAX_DESKS);
+        if hidden > 0 {
+            let hidden_waiting = ks[MAX_DESKS..].iter().any(|k| k.state == KnightState::Blocked);
+            let (f, b) = if hidden_waiting {
+                (AMBER_INK, AMBER)
+            } else {
+                (HEAD_FG, FRAME)
+            };
+            badges.push((format!(" +{hidden} more "), f, b));
+        }
+        if ks.iter().any(|k| k.state == KnightState::Blocked) {
+            badges.push((" ! ".into(), AMBER_INK, AMBER));
+        }
+        let mut col = x0 + rw;
+        for (text, f, b) in badges.iter().rev() {
+            col -= crate::render::str_width(text) as i32;
+            cv.text(col, y0, text, *f, *b);
+        }
+
+        cv.text(x0, tag_row, &fit("", rw as usize), MUTED, TAG_BG);
+        if d == 0 {
+            // Nobody home: one dark desk.
+            let dx = x0 + rw / 2 - 5 * s;
+            cv.rect(dx, b + 9 * s, 9 * s, s, Rgb::hex(0x4a5470));
+            cv.rect(dx, b + 10 * s, 9 * s, 2 * s, Rgb::hex(0x232a40));
+            let msg = "不在 · no knights";
+            let pad = ((rw - crate::render::str_width(msg) as i32) / 2).max(0) as usize;
+            cv.text(
+                x0,
+                tag_row,
+                &fit(&format!("{}{msg}", " ".repeat(pad)), rw as usize),
+                Rgb::hex(0x4a5576),
+                TAG_BG,
+            );
+            return;
+        }
+        for (i, k) in ks.iter().take(MAX_DESKS).enumerate() {
+            let sx = x0 + 1 + i as i32 * slot_w;
+            self.draw_desk_knight(w, cv, k, (sx, slot_w), b, s, tag_row);
+        }
+    }
+
+    /// A knight at its desk inside a room, `s` pixels per sprite pixel.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_desk_knight(&self, w: &World, cv: &mut Canvas, k: &Knight, slot: (i32, i32), b: i32, s: i32, tag_row: i32) {
+        let (sx, slot_w) = slot;
+        let t = w.time;
+        let kx = sx + 1 + s;
+        let mut ky = b + 3 * s;
+        let mut closed = false;
+        if k.state == KnightState::Idle {
+            ky -= (((t * 1.5) as i32 + k.color_idx as i32) % 2) * s;
+            closed = true;
+        }
+        let pal = self.knight_pal(w, k);
+        let opts = SpriteOpts {
+            closed,
+            back: k.state == KnightState::Unknown,
+            bow: false,
+        };
+        cv.sprite_scaled(&KNIGHT_MINI, &pal, kx, ky, opts, s);
+        cv.rect(kx - s, b + 9 * s, 9 * s, s, Rgb::hex(0x9aa6c4));
+        cv.rect(kx - s, b + 10 * s, 9 * s, 2 * s, Rgb::hex(0x2f3a5c));
+        for i in 0..3 {
+            let lit = ((t * 3.0 + i as f32 * 1.3 + sx as f32) as i32) % 3 != 0;
+            let c = if lit { k.crystal } else { k.crystal.mix(BLACK, 0.6) };
+            cv.rect(kx + s * (1 + 2 * i), b + 11 * s, s, s, c);
+        }
+        let g = ((t * 8.0) as i32 + k.color_idx as i32) % 2;
+        match k.state {
+            KnightState::Working => {
+                cv.rect(kx + s, b + 9 * s - g * s, s, s, k.skin);
+                cv.rect(kx + 5 * s, b + 9 * s - (1 - g) * s, s, s, k.skin);
+            }
+            KnightState::Blocked => {
+                let wave = (t * 4.0) as i32 % 2;
+                cv.rect(kx + 7 * s, ky + s - wave * s, s, s, k.skin);
+                cv.rect(kx + 7 * s, ky + 2 * s, s, 3 * s, Rgb::hex(0x4a4f8c));
+                cv.rect(kx + 8 * s, b, 3 * s, 5 * s, BUBBLE);
+                if (t * 3.0) as i32 % 2 == 0 {
+                    cv.rect(kx + 9 * s, b + s, s, 2 * s, RED);
+                    cv.rect(kx + 9 * s, b + 4 * s, s, s, RED);
+                }
+            }
+            KnightState::Done => {
+                cv.rect(kx + 8 * s, b, 3 * s, 5 * s, BUBBLE);
+                for (dx, dy) in [(8, 2), (9, 3), (10, 1)] {
+                    cv.rect(kx + dx * s, b + dy * s, s, s, GREEN);
+                }
+            }
+            KnightState::Idle => {
+                let ang = t * 1.6 + k.color_idx as f32;
+                let x = (kx + 3 * s) as f32 + ang.cos() * 5.0 * s as f32;
+                let y = (ky + 4 * s) as f32 + ang.sin() * 3.0 * s as f32;
+                cv.rect(x.round() as i32, y.round() as i32, s, s, k.crystal.mix(WHITE, 0.4));
+            }
+            KnightState::Unknown => {}
+        }
+
+        // Apprentices beside the desk: reporters first, then by arrival.
+        let crew: Vec<&Apprentice> = w.crew(&k.pane_id).filter(|p| p.phase != Phase::Exit).collect();
+        let mut order: Vec<&Apprentice> = crew.iter().copied().filter(|p| !p.active()).collect();
+        let mut working: Vec<&Apprentice> = crew.iter().copied().filter(|p| p.active()).collect();
+        working.sort_by_key(|p| p.id);
+        order.extend(working);
+        let ax = kx + 8 * s;
+        let room_for = ((sx + slot_w - 1 - ax) / (4 * s)).clamp(0, 3) as usize;
+        for (n, p) in order.iter().take(room_for).enumerate() {
+            let x = ax + n as i32 * 4 * s;
+            let back = !p.active();
+            let bob = i32::from(!back && ((t * 4.0) as i64 + p.id as i64) % 2 == 1);
+            let y = b + 7 * s - bob * s;
+            let opts = SpriteOpts {
+                back,
+                ..Default::default()
+            };
+            cv.sprite_scaled(
+                &APPRENTICE_MINI,
+                &apprentice_pal(k.crystal, p.skin, p.hair),
+                x,
+                y,
+                opts,
+                s,
+            );
+            if back && (t * 4.0) as i32 % 2 == 1 {
+                cv.rect(x + s, y - 2 * s, 2 * s, s, k.crystal);
+            }
+        }
+
+        // Name tag, with the apprentices that did not fit.
+        let extra = order.len().saturating_sub(room_for);
+        let right = if extra > 0 { format!("+{extra} ") } else { String::new() };
+        let width = (slot_w as usize).saturating_sub(right.len());
+        let label = fit(&format!(" {} {}", k.state.glyph(), k.name), width) + &right;
+        let (mut fg, mut bg) = (k.crystal, TAG_BG);
+        match k.state {
+            KnightState::Blocked => {
+                fg = AMBER_INK;
+                bg = if (t * 2.0) as i32 % 2 == 0 { AMBER } else { AMBER_DIM };
+            }
+            KnightState::Idle | KnightState::Unknown => fg = k.crystal.mix(TAG_BG, 0.35),
+            _ => {}
+        }
+        cv.text(sx, tag_row, &label, fg, bg);
     }
 }
 

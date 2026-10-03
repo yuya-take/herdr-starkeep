@@ -43,7 +43,19 @@ struct Fake {
 pub fn spawn(tx: Sender<Msg>, knights: usize) {
     std::thread::spawn(move || {
         let mut rng = Rng::new(42);
-        let ws_names = ["core", "apps", "infra", "docs"];
+        let ws_names = ["core", "apps", "infra", "docs", "notes", "ops", "mobile", "site"];
+        // Knights per Space, including an empty one and one with overflow.
+        let sizes = [3, 1, 2, 0, 5, 1, 4, 2];
+        let mut seats: Vec<(usize, usize)> = Vec::new();
+        let mut spaces = 0;
+        while seats.len() < knights {
+            let ws = spaces;
+            spaces += 1;
+            for p in 0..sizes[ws % sizes.len()] {
+                seats.push((ws, p));
+            }
+        }
+        seats.truncate(knights);
         let names = [
             "claude:api",
             "codex:web",
@@ -67,8 +79,8 @@ pub fn spawn(tx: Sender<Msg>, knights: usize) {
         let states = ["working", "working", "idle", "working", "blocked", "working", "done"];
         let mut fakes: Vec<Fake> = (0..knights)
             .map(|i| Fake {
-                pane: format!("w{}:p{}", i / 5 + 1, i % 5 + 1),
-                ws: i / 5,
+                pane: format!("w{}:p{}", seats[i].0 + 1, seats[i].1 + 1),
+                ws: seats[i].0,
                 name: names[i % names.len()],
                 state: states[i % states.len()],
                 t: 0.0,
@@ -103,7 +115,7 @@ pub fn spawn(tx: Sender<Msg>, knights: usize) {
                         title: f.title.into(),
                     })
                     .collect(),
-                workspaces: (0..knights.div_ceil(5))
+                workspaces: (0..spaces)
                     .map(|i| Workspace {
                         id: format!("w{}", i + 1),
                         label: ws_names[i % ws_names.len()].into(),

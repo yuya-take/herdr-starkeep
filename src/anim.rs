@@ -126,8 +126,9 @@ pub fn settle(w: &mut World, pane: &str) {
 }
 
 pub struct Star {
+    /// Position inside the window, both 0..1 so the field survives resizes.
     pub x: f32,
-    pub y: i32,
+    pub y: f32,
     pub s: f32,
 }
 
@@ -137,24 +138,23 @@ pub struct Starfield {
 }
 
 impl Starfield {
-    pub fn new(w: &mut World, n: usize, height: i32) -> Starfield {
+    pub fn new(w: &mut World, n: usize) -> Starfield {
         let stars = (0..n)
             .map(|_| Star {
-                x: w.rng.range(0.0, 1.0),
-                y: (w.rng.f() * height as f32) as i32,
+                x: w.rng.f(),
+                y: w.rng.f(),
                 s: w.rng.range(0.5, 1.6),
             })
             .collect();
         Starfield { stars }
     }
 
-    /// x is kept in 0..1 so the field survives pane resizes.
-    pub fn advance(&mut self, rng: &mut crate::model::Rng, dt: f32, warp: f32, width: f32, height: i32) {
+    pub fn advance(&mut self, rng: &mut crate::model::Rng, dt: f32, warp: f32, width: f32) {
         for s in self.stars.iter_mut() {
             s.x -= s.s * warp * dt * 26.0 / width.max(1.0);
             if s.x < 0.0 {
                 s.x += 1.0;
-                s.y = (rng.f() * height as f32) as i32;
+                s.y = rng.f();
             }
         }
     }

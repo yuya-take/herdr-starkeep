@@ -1,4 +1,4 @@
-//! Knights (herdr agents), apprentices (subagents) and floors (workspaces).
+//! Knights (herdr agents), apprentices (subagents) and rooms (herdr Spaces).
 //!
 //! The model advances regardless of what is on screen; only positions and paths
 //! are specific to the large view.
@@ -119,7 +119,8 @@ pub struct Workspace {
     pub label: String,
 }
 
-pub struct Floor {
+/// One herdr Space (workspace). Rooms without agents are kept as empty rooms.
+pub struct Room {
     pub workspace_id: String,
     pub name: String,
     /// pane ids, left to right
@@ -269,35 +270,28 @@ impl World {
         self.status = why;
     }
 
-    /// Floors for the overview: one per workspace, split when it has more
-    /// knights than desks.
-    pub fn floors(&self, per_floor: usize) -> Vec<Floor> {
-        let mut floors: Vec<Floor> = Vec::new();
-        let mut i = 0;
-        while i < self.knights.len() {
-            let ws = &self.knights[i].workspace_id;
-            let run: Vec<String> = self.knights[i..]
-                .iter()
-                .take_while(|k| &k.workspace_id == ws)
-                .map(|k| k.pane_id.clone())
-                .collect();
-            i += run.len();
-            let label = self.workspace_label(ws);
-            let parts = run.chunks(per_floor.max(1)).count();
-            for (n, chunk) in run.chunks(per_floor.max(1)).enumerate() {
-                let name = if parts > 1 {
-                    format!("{} {}/{}", label, n + 1, parts)
-                } else {
-                    label.to_string()
-                };
-                floors.push(Floor {
-                    workspace_id: ws.clone(),
-                    name,
-                    knights: chunk.to_vec(),
-                });
+    /// Every Space in herdr's order, with its knights.
+    pub fn rooms(&self) -> Vec<Room> {
+        let mut rooms: Vec<Room> = self
+            .workspaces
+            .iter()
+            .map(|ws| Room {
+                workspace_id: ws.id.clone(),
+                name: ws.label.clone(),
+                knights: Vec::new(),
+            })
+            .collect();
+        for k in &self.knights {
+            match rooms.iter_mut().find(|r| r.workspace_id == k.workspace_id) {
+                Some(r) => r.knights.push(k.pane_id.clone()),
+                None => rooms.push(Room {
+                    workspace_id: k.workspace_id.clone(),
+                    name: k.workspace_id.clone(),
+                    knights: vec![k.pane_id.clone()],
+                }),
             }
         }
-        floors
+        rooms
     }
 
     // ---------- apprentices ----------
@@ -491,9 +485,11 @@ mod tests {
         assert_eq!(panes, ["w1:p2", "w1:p10", "w2:p1"]);
         assert_eq!(w.knights[0].name, "claude:core");
         assert_eq!(w.knights[0].state, KnightState::Blocked);
-        let floors = w.floors(1);
-        assert_eq!(floors.len(), 3);
-        assert_eq!(floors[0].name, "core 1/2");
+        let rooms = w.rooms();
+        assert_eq!(rooms.len(), 2);
+        assert_eq!(rooms[0].name, "core");
+        assert_eq!(rooms[0].knights, ["w1:p2", "w1:p10"]);
+        assert_eq!(rooms[1].knights, ["w2:p1"]);
     }
 
     #[test]
@@ -532,6 +528,14 @@ mod tests {
         assert_eq!(by_task("t2"), Spot::Seat(0));
         assert_eq!(by_task("t5"), Spot::Floor(0));
         assert_eq!(by_task("t6"), Spot::Offdeck);
+    }
+
+    #[test]
+    fn empty_spaces_are_rooms_too() {
+        let w = world(vec![agent("w2:p1", "w2", "idle")]);
+        let rooms = w.rooms();
+        assert_eq!(rooms.len(), 2);
+        assert!(rooms[0].knights.is_empty());
     }
 
     #[test]

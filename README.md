@@ -5,7 +5,10 @@ herdrで動いているエージェントを、軌道上の修練船で働く騎
 
 - 騎士の状態（working / blocked / done / idle / unknown）は、herdrのソケットから0.5秒ごとに取得します
 - 見習いの出入りは、Claude Codeのフックが書き出す `~/.local/state/starkeep/events.jsonl` から取得します
-- 騎士が3人以下のときは寄りの画面、4人以上のときはフロアを積み重ねた全体図で表示します
+- herdrのSpace（ワークスペース）1つを1部屋として、Spaceの数に合わせて 1×1・1×2・1×3・2×2・2×3 に並べます。7つ以上は横3つずつの行を縦にスクロールします
+- 1部屋にデスクは騎士の数だけ最大4つ。5人以上いるSpaceは見出しに「+N more」を出します（隠れた騎士が応答待ちなら琥珀色）
+- エージェントのいないSpaceは「不在」の部屋として表示します
+- 部屋を選んで Enter を押すと、そのSpaceの寄りの画面になります
 
 ## 必要なもの
 
@@ -54,10 +57,10 @@ hooks/install.sh
 
 ## 操作
 
-| キー | 全体図 | 寄りの画面 |
+| キー | 部屋の一覧 | 寄りの画面 |
 | --- | --- | --- |
-| ← → ↑ ↓ / hjkl | 騎士を選ぶ | 隣の騎士へずらす |
-| Enter / クリック | 選んだ騎士に寄る | その騎士のペインへ移動して閉じる（Enter） |
+| ← → ↑ ↓ / hjkl | 部屋（Space）を選ぶ | 隣の騎士へずらす |
+| Enter / クリック | 選んだ部屋に寄る（応答待ちの騎士から） | その騎士のペインへ移動して閉じる（Enter） |
 | Esc | 閉じる | 全体図に戻る（クリックでも戻る） |
 | q | 終了 | 終了 |
 
@@ -77,9 +80,9 @@ herdr-plugin.toml   ペイン「ship」と、それを開くアクション「op
 src/main.rs         描画ループ、キー入力、イベント受信
 src/herdr.rs        herdrソケット（agent.list / workspace.list）
 src/hooks.rs        events.jsonl の読み込みと追従
-src/model.rs        騎士、見習い、フロアの状態
+src/model.rs        騎士、見習い、部屋（Space）の状態
 src/spots.rs        見習いの居場所の割り当てと繰り上がり
-src/view.rs         全体図と寄りの切り替え、描画
+src/view.rs         部屋の一覧と寄りの切り替え、描画
 src/anim.rs         歩行、一礼、星の流れ
 src/sprites.rs      文字列とパレットのドット絵
 src/render.rs       ハーフブロックのフレームバッファと文字の層
