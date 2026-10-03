@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Agent|Task", "hooks": [{ "type": "command", "command": "~/.config/starkeep/hook.sh" }] }
+    ],
+    "SubagentStart": [
+      { "hooks": [{ "type": "command", "command": "~/.config/starkeep/hook.sh" }] }
+    ],
+    "SubagentStop": [
+      { "hooks": [{ "type": "command", "command": "~/.config/starkeep/hook.sh" }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "command", "command": "~/.config/starkeep/hook.sh" }] }
+    ]
+  }
+}
