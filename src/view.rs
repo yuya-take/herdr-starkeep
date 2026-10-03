@@ -871,23 +871,57 @@ impl View {
         let d = n.min(MAX_DESKS);
         let slot_w = (rw - 2) / d.max(1) as i32;
         let b = pb - 14 * s; // top of the desk scene
-        let lit = n > 0;
+        let ks: Vec<&Knight> = room.knights.iter().filter_map(|id| w.knight(id)).collect();
+
+        // Each desk's share of the room is lit by its knight's state.
+        let lights: Vec<Light> = match d {
+            0 => vec![light(None, w.time)],
+            _ => ks.iter().take(d).map(|k| light(Some(k.state), w.time)).collect(),
+        };
+        let slot_of = |x: i32| match d {
+            0 => 0,
+            _ => ((x - x0 - 1) / slot_w).clamp(0, d as i32 - 1) as usize,
+        };
 
         // Wall, window and floor.
-        cv.rect(x0, pt, rw, pb - pt, WALL);
         let (wx, wy, ww) = (x0 + 1, pt + 1, rw - 2);
         let wh = (b + 5 * s - wy).max(3);
+        for x in x0..x0 + rw {
+            let lt = &lights[slot_of(x)];
+            cv.rect(x, pt, 1, b + 8 * s - pt, lt.wall);
+            cv.rect(x, b + 8 * s, 1, s, lt.rail);
+            for y in b + 9 * s..pb {
+                let odd = ((x >> 3) + ((y - pt) >> s)) & 1 == 1;
+                cv.pi(x, y, if odd { lt.floor.0 } else { lt.floor.1 });
+            }
+        }
         cv.rect(wx, wy - 1, ww, 1, FRAME);
-        cv.rect(wx, wy, ww, wh, if lit { SPACE } else { Rgb::hex(0x03050a) });
         cv.rect(wx, wy + wh, ww, 1, FRAME);
+        for x in wx..wx + ww {
+            cv.rect(
+                x,
+                wy,
+                1,
+                wh,
+                SPACE.mix(Rgb::hex(0x03050a), 1.0 - lights[slot_of(x)].stars),
+            );
+        }
+        // Ceiling lights over lit desks.
+        for (i, lt) in lights.iter().enumerate() {
+            if let Some(c) = lt.ceiling {
+                let (sx, sw) = (x0 + 1 + i as i32 * slot_w, if d == 0 { rw - 2 } else { slot_w });
+                cv.rect(sx + sw / 5, wy - 1, sw - 2 * (sw / 5), 1, c);
+            }
+        }
         if let Some(sf) = self.room_stars.get(tile) {
-            let (head, tail) = match lit {
-                true => (Rgb::hex(0xe6f1ff), Rgb::hex(0x9fc2ff)),
-                false => (Rgb::hex(0x5a6584), Rgb::hex(0x2a3350)),
-            };
             for st in &sf.stars {
                 let sx = wx as f32 + st.x * (ww - 1) as f32;
                 let sy = wy + ((st.y * wh as f32) as i32).min(wh - 1);
+                let bright = lights[slot_of(sx.round() as i32)].stars;
+                let (head, tail) = (
+                    SPACE.mix(Rgb::hex(0xe6f1ff), bright),
+                    SPACE.mix(Rgb::hex(0x9fc2ff), bright),
+                );
                 let len = 1 + st.s.round() as i32;
                 cv.p(sx, sy as f32, head);
                 for k in 1..=len {
@@ -901,16 +935,8 @@ impl View {
         for i in 1..d as i32 {
             cv.rect(x0 + 1 + i * slot_w, wy, 1, wh, FRAME);
         }
-        cv.rect(x0, b + 8 * s, rw, s, Rgb::hex(0x2a3354));
-        for y in b + 9 * s..pb {
-            for x in x0..x0 + rw {
-                let odd = ((x >> 3) + ((y - pt) >> s)) & 1 == 1;
-                cv.pi(x, y, if odd { Rgb::hex(0x151b2d) } else { Rgb::hex(0x192036) });
-            }
-        }
 
         // Header: Space name, plus waiting and overflow badges.
-        let ks: Vec<&Knight> = room.knights.iter().filter_map(|id| w.knight(id)).collect();
         let (fg, bg) = if selected {
             (Rgb::hex(0xdfe7ff), SELECT)
         } else {
@@ -963,6 +989,14 @@ impl View {
         for (i, k) in ks.iter().take(MAX_DESKS).enumerate() {
             let sx = x0 + 1 + i as i32 * slot_w;
             self.draw_desk_knight(w, cv, k, (sx, slot_w), b, s, tag_row);
+            // A desk waiting for an answer gets a blinking outline.
+            if let Some(c) = lights[i].outline {
+                let (x1, x2, y1, y2) = (sx - 1, sx + slot_w - 1, pt, pb - 1);
+                cv.rect(x1, y1, x2 - x1 + 1, 1, c);
+                cv.rect(x1, y2, x2 - x1 + 1, 1, c);
+                cv.rect(x1, y1, 1, y2 - y1 + 1, c);
+                cv.rect(x2, y1, 1, y2 - y1 + 1, c);
+            }
         }
     }
 
@@ -987,9 +1021,11 @@ impl View {
         cv.sprite_scaled(&KNIGHT_MINI, &pal, kx, ky, opts, s);
         cv.rect(kx - s, b + 9 * s, 9 * s, s, Rgb::hex(0x9aa6c4));
         cv.rect(kx - s, b + 10 * s, 9 * s, 2 * s, Rgb::hex(0x2f3a5c));
+        // Desk lamps blink while the knight is busy and go dark at rest.
+        let lamps_on = matches!(k.state, KnightState::Working | KnightState::Blocked | KnightState::Done);
         for i in 0..3 {
-            let lit = ((t * 3.0 + i as f32 * 1.3 + sx as f32) as i32) % 3 != 0;
-            let c = if lit { k.crystal } else { k.crystal.mix(BLACK, 0.6) };
+            let lit = lamps_on && ((t * 3.0 + i as f32 * 1.3 + sx as f32) as i32) % 3 != 0;
+            let c = if lit { k.crystal } else { k.crystal.mix(BLACK, 0.75) };
             cv.rect(kx + s * (1 + 2 * i), b + 11 * s, s, s, c);
         }
         let g = ((t * 8.0) as i32 + k.color_idx as i32) % 2;
@@ -1068,6 +1104,60 @@ impl View {
             _ => {}
         }
         cv.text(sx, tag_row, &label, fg, bg);
+    }
+}
+
+/// How one desk's share of a room is lit.
+struct Light {
+    wall: Rgb,
+    floor: (Rgb, Rgb),
+    rail: Rgb,
+    /// Star brightness in the window, 0..1.
+    stars: f32,
+    ceiling: Option<Rgb>,
+    outline: Option<Rgb>,
+}
+
+/// Lighting for a knight's state; `None` is an empty room.
+fn light(state: Option<KnightState>, t: f32) -> Light {
+    let dark = Light {
+        wall: Rgb::hex(0x0e1222),
+        floor: (Rgb::hex(0x0b0e1b), Rgb::hex(0x0d111f)),
+        rail: Rgb::hex(0x181e33),
+        stars: 0.3,
+        ceiling: None,
+        outline: None,
+    };
+    match state {
+        None | Some(KnightState::Idle) | Some(KnightState::Unknown) => dark,
+        Some(KnightState::Working) => Light {
+            wall: Rgb::hex(0x2b3764),
+            floor: (Rgb::hex(0x222c4e), Rgb::hex(0x283358)),
+            rail: Rgb::hex(0x5566a0),
+            stars: 1.0,
+            ceiling: Some(Rgb::hex(0xdfe9ff)),
+            outline: None,
+        },
+        Some(KnightState::Done) => Light {
+            wall: Rgb::hex(0x183a32),
+            floor: (Rgb::hex(0x13302a), Rgb::hex(0x17362e)),
+            rail: Rgb::hex(0x2f8a64),
+            stars: 0.8,
+            ceiling: Some(Rgb::hex(0x7dffb0)),
+            outline: None,
+        },
+        Some(KnightState::Blocked) => {
+            let on = (t * 2.0) as i32 % 2 == 0;
+            let glow = if on { 1.0 } else { 0.55 };
+            Light {
+                wall: Rgb::hex(0x1a1408).mix(Rgb::hex(0x4a360e), glow),
+                floor: (Rgb::hex(0x2a200b), Rgb::hex(0x32270e)),
+                rail: Rgb::hex(0x9a7020),
+                stars: 0.8,
+                ceiling: Some(if on { AMBER } else { AMBER_DIM }),
+                outline: Some(if on { AMBER } else { AMBER_DIM }),
+            }
+        }
     }
 }
 
