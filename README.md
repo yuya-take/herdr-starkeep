@@ -19,7 +19,7 @@ herdrで動いているエージェントを、軌道上の修練船で働く騎
 ## インストール
 
 ```sh
-cargo build --release
+cargo build --release --locked
 herdr plugin link "$PWD"
 herdr plugin pane open --plugin starkeep --entrypoint ship
 ```

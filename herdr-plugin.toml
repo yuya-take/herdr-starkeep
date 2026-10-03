@@ -6,7 +6,7 @@ description = "Watch your agents work as knights on an orbital training ship"
 platforms = ["linux", "macos"]
 
 [[build]]
-command = ["cargo", "build", "--release"]
+command = ["cargo", "build", "--release", "--locked"]
 
 [[panes]]
 id = "ship"

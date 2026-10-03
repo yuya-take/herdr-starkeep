@@ -1,6 +1,7 @@
 #!/bin/sh
 # Claude Code hook for Starkeep. Appends one JSON line per subagent event.
 # Stdin: the hook input Claude Code passes (JSON). Never blocks Claude.
+umask 077  # events file and dir: owner-only
 [ -n "${HERDR_PANE_ID:-}" ] || exit 0
 command -v jq >/dev/null 2>&1 || exit 0
 out="${STARKEEP_EVENTS:-${XDG_STATE_HOME:-$HOME/.local/state}/starkeep/events.jsonl}"
