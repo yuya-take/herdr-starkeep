@@ -1,36 +1,43 @@
 # Starkeep
 
-herdrで動いているエージェントを、軌道上の修練船で働く騎士として描くプラグインです。
-サブエージェントは見習いとして入ってきて、仕事を終えると成果のキューブを騎士に渡して出ていきます。
+A herdr plugin that draws the agents running in herdr as knights working on an orbital training ship.
+Subagents come in as apprentices, work beside their knight, and leave after handing over a glowing cube with their results.
 
-- 騎士の状態（working / blocked / done / idle / unknown）は、herdrのソケットから0.5秒ごとに取得します
-- 見習いの出入りは、Claude Codeのフックが書き出す `~/.local/state/starkeep/events.jsonl` から取得します
-- herdrのSpace（ワークスペース）1つを1部屋として、Spaceの数に合わせて 1×1・1×2・1×3・2×2・2×3 に並べます。7つ以上は横3つずつの行を縦にスクロールします
-- 1部屋にデスクは騎士の数だけ最大4つ。5人以上いるSpaceは見出しに「+N more」を出します（隠れた騎士が応答待ちなら琥珀色）
-- エージェントのいないSpaceは「不在」の部屋として表示します
-- 部屋を選んで Enter を押すと、そのSpaceの寄りの画面になります
+- Knight state (working / blocked / done / idle / unknown) is read from the herdr socket every 0.5 seconds
+- Apprentices come and go based on `~/.local/state/starkeep/events.jsonl`, written by a Claude Code hook
+- Each herdr Space (workspace) is one room. Rooms are laid out 1×1, 1×2, 1×3, 2×2 or 2×3 depending on how many Spaces there are; with seven or more, rows of three scroll vertically
+- A room has one desk per knight, up to four. A Space with five or more shows "+N more" in its header, in amber when a hidden knight is waiting for an answer
+- Each desk is lit by its knight's state: bright while working, dark at rest, green when done, and blinking amber while waiting for an answer
+- Spaces without agents show as empty rooms
+- Select a room and press Enter to zoom into that Space
 
-## 必要なもの
+## Requirements
 
-- herdr 0.9.0 以降
-- `jq`（Claude Code のフックで使います）
-- macOS（Apple Silicon / Intel）と Linux（x86_64 / arm64）はビルド済みの実行ファイルを使います。それ以外の環境では Rust（`cargo`）でビルドします
+- herdr 0.9.0 or later
+- `jq` (used by the Claude Code hook)
+- Prebuilt binaries are used on macOS (Apple Silicon / Intel) and Linux (x86_64 / arm64). Elsewhere Starkeep is built with Rust (`cargo`)
 
-## インストール
+## Install
 
 ```sh
 herdr plugin install yuya-take/herdr-starkeep
-herdr plugin action invoke starkeep.setup-hooks   # 見習い（サブエージェント）を表示する
-herdr plugin action invoke starkeep.setup-key     # prefix+shift+k で開く
+herdr plugin action invoke starkeep.setup-hooks   # show apprentices (subagents)
+herdr plugin action invoke starkeep.setup-key     # open with prefix+shift+k
 ```
 
-1行目で、herdrがリポジトリを取得し、GitHub Releases からこの環境向けの実行ファイルをダウンロードします。ダウンロードしたファイルは SHA-256 のチェックサムで確認し、一致しなければインストールを中止します。
+The first command makes herdr fetch the repository and download the binary for your platform from GitHub Releases. The download is checked against its SHA-256 checksum, and the install stops if they don't match.
 
-開くと画面の90%のポップアップになります。キーを割り当てずに開くときは `herdr plugin action invoke starkeep.open` です。
+Starkeep opens as a popup covering 90% of the screen. To open it without a key binding, run `herdr plugin action invoke starkeep.open`.
 
-### キーの割り当て
+Actions run in the background. Check their results with:
 
-`starkeep.setup-key` は、herdrの `config.toml` に次の設定を追加して、設定を再読み込みします。元のファイルは `config.toml.starkeep-backup` として残ります。別のキーにしたいときは、アクションを使わずに次の設定を手で書き、`key` を変えてから `herdr server reload-config` を実行します（`prefix+k` は標準でペイン移動に使われています）。
+```sh
+herdr plugin log list --plugin starkeep
+```
+
+### Key binding
+
+`starkeep.setup-key` adds the following to herdr's `config.toml` and reloads the config. The previous file is kept as `config.toml.starkeep-backup`. For a different key, skip the action, add this block by hand with another `key`, and run `herdr server reload-config` (`prefix+k` is taken by default for moving between panes).
 
 ```toml
 [[keys.command]]
@@ -40,33 +47,33 @@ command = "starkeep.open"
 description = "open starkeep"
 ```
 
-`herdr --remote` でつないでいる場合、独自コマンドのキーは手元の設定では効きません。サーバー側でこのアクションを実行し、`herdr --remote <接続先> --remote-keybindings server` でつないでください。
+With `herdr --remote`, custom command key bindings from the local config are ignored. Install Starkeep and run the actions on the server, then connect with `herdr --remote <target> --remote-keybindings server`.
 
-### 見習い（サブエージェント）の表示
+### Apprentices (subagents)
 
-`starkeep.setup-hooks` は、`hooks/hook.sh` を `~/.config/starkeep/hook.sh` にコピーし、`hooks/settings.json` のフック設定を `~/.claude/settings.json` に追加します。元の設定ファイルは `settings.json.starkeep-backup` として残ります。設定後に起動した Claude Code から有効になります。外すときは `starkeep.remove-hooks` です。
+`starkeep.setup-hooks` copies `hooks/hook.sh` to `~/.config/starkeep/hook.sh` and adds the hooks in `hooks/settings.json` to `~/.claude/settings.json`. The previous settings file is kept as `settings.json.starkeep-backup`. The hooks take effect in Claude Code sessions started afterwards. Remove them with `starkeep.remove-hooks`.
 
-| フック | 記録するイベント |
+| Hook | Event recorded |
 | --- | --- |
-| `PreToolUse`（Agent / Task） | 見習いが呼ばれた。タスクの説明を記録 |
-| `SubagentStart` | 見習いのIDを記録 |
-| `SubagentStop` | 見習いが報告に来る |
-| `SessionEnd` | そのセッションの見習いを全員帰す |
+| `PreToolUse` (Agent / Task) | An apprentice is summoned; records the task description |
+| `SubagentStart` | Records the apprentice's id |
+| `SubagentStop` | The apprentice comes to report |
+| `SessionEnd` | Sends every apprentice of that session home |
 
-フックは `HERDR_PANE_ID` で騎士（ペイン）と結び付けます。herdrの外で動いているClaude Codeでは何も書き出しません。
+The hook ties apprentices to their knight (pane) with `HERDR_PANE_ID`. It writes nothing for Claude Code running outside herdr.
 
-## 操作
+## Controls
 
-| キー | 部屋の一覧 | 寄りの画面 |
+| Key | Rooms | Close-up |
 | --- | --- | --- |
-| ← → ↑ ↓ / hjkl | 部屋（Space）を選ぶ | 隣の騎士へずらす |
-| Enter / クリック | 選んだ部屋に寄る（応答待ちの騎士から） | その騎士のペインへ移動して閉じる（Enter） |
-| Esc | 閉じる | 全体図に戻る（クリックでも戻る） |
-| q | 終了 | 終了 |
+| ← → ↑ ↓ / hjkl | Select a room (Space) | Move to the next knight |
+| Enter / click | Zoom into the room, starting with a knight waiting for an answer | Go to that knight's pane and close (Enter) |
+| Esc | Close | Back to the rooms (click also works) |
+| q | Quit | Quit |
 
-## 開発
+## Development
 
-手元の作業フォルダをそのままherdrにつなぎます。
+Link your working copy to herdr:
 
 ```sh
 cargo build --release --locked
@@ -74,36 +81,36 @@ herdr plugin link "$PWD"
 herdr plugin pane open --plugin starkeep --entrypoint ship
 ```
 
-### リリース
+### Releasing
 
-`herdr-plugin.toml` と `Cargo.toml` の `version` を上げてマージし、同じ番号のタグ（例: `v0.2.0`）をpushします。CIが各環境向けにビルドして GitHub Releases に置きます。
+Bump `version` in `herdr-plugin.toml` and `Cargo.toml`, merge, then push a tag with the same number (for example `v0.2.0`). CI builds every platform and uploads the binaries to GitHub Releases.
 
-## デモ
+## Demo
 
-herdrやフックがなくても動きを確認できます。
+Try it without herdr or the hook:
 
 ```sh
-cargo run --release -- --demo           # 7人
-cargo run --release -- --knights 15     # 15人
+cargo run --release -- --demo           # 7 knights
+cargo run --release -- --knights 15     # 15 knights
 ```
 
-## 構成
+## Layout
 
 ```
-herdr-plugin.toml   ペイン「ship」と、それを開くアクション「open」
-src/main.rs         描画ループ、キー入力、イベント受信
-src/herdr.rs        herdrソケット（agent.list / workspace.list）
-src/hooks.rs        events.jsonl の読み込みと追従
-src/model.rs        騎士、見習い、部屋（Space）の状態
-src/spots.rs        見習いの居場所の割り当てと繰り上がり
-src/view.rs         部屋の一覧と寄りの切り替え、描画
-src/anim.rs         歩行、一礼、星の流れ
-src/sprites.rs      文字列とパレットのドット絵
-src/render.rs       ハーフブロックのフレームバッファと文字の層
-src/demo.rs         --demo 用の模擬データ
-hooks/hook.sh       Claude Code から呼ぶスクリプト
-hooks/install.sh    フックの設定（starkeep.setup-hooks）
-hooks/uninstall.sh  フックの削除（starkeep.remove-hooks）
-scripts/install-binary.sh  インストール時の実行ファイル取得（なければビルド）
-scripts/setup-key.sh       キーの割り当て（starkeep.setup-key）
+herdr-plugin.toml          the "ship" pane and the actions that open and set it up
+src/main.rs                render loop, key input, event intake
+src/herdr.rs               herdr socket (agent.list / workspace.list)
+src/hooks.rs               reading and following events.jsonl
+src/model.rs               knights, apprentices and rooms (Spaces)
+src/spots.rs               where apprentices stand, and moving them up
+src/view.rs                the rooms grid and the close-up, and drawing them
+src/anim.rs                walking, bowing, star fields
+src/sprites.rs             pixel art as strings and palettes
+src/render.rs              half-block frame buffer and text layer
+src/demo.rs                simulated data for --demo
+hooks/hook.sh              script Claude Code runs
+hooks/install.sh           installs the hook (starkeep.setup-hooks)
+hooks/uninstall.sh         removes the hook (starkeep.remove-hooks)
+scripts/install-binary.sh  fetches the binary at install time, or builds it
+scripts/setup-key.sh       binds the key (starkeep.setup-key)
 ```
