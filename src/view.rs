@@ -975,7 +975,7 @@ impl View {
             let dx = x0 + rw / 2 - 5 * s;
             cv.rect(dx, b + 9 * s, 9 * s, s, Rgb::hex(0x4a5470));
             cv.rect(dx, b + 10 * s, 9 * s, 2 * s, Rgb::hex(0x232a40));
-            let msg = "不在 · no knights";
+            let msg = "- no knights -";
             let pad = ((rw - crate::render::str_width(msg) as i32) / 2).max(0) as usize;
             cv.text(
                 x0,
